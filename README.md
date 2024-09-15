@@ -1,10 +1,10 @@
 Setp : 1 `To clone the repo`
 ```
-git clone ...
+git clone https://anc-mypolicylist@dev.azure.com/anc-mypolicylist/AnC-OffshoreDev/_git/agentsandcarriers.textsummarization.ai
 ```
 Setp : 2 `Change Directory`
 ```
-cd ...
+cd agentsandcarriers.textsummarization.ai
 ```
 Step : 4 `To create virtual enviroment`
 - On Windows:
