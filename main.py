@@ -1,38 +1,35 @@
-import streamlit as st
-from pdf_processor import load_pdf, create_vector_db
-from chatbot import create_rag_chain
-import os
-from dotenv import load_dotenv
+import chromadb
+from chromadb.config import Settings
 
-# Load environment variables
-load_dotenv()
+def store_vector_data(collection_name, documents, metadatas, ids):
+    # Initialize the ChromaDB client
+    client = chromadb.HttpClient(host="localhost", port=8000)
 
-def main():
-    st.set_page_config(page_title="PDF Chatbot", layout="wide")
-    st.header("PDF Chatbot with Vector Database")
+    # Get or create a collection
+    collection = client.get_or_create_collection(name=collection_name)
 
-    uploaded_file = st.file_uploader("Upload a PDF file", type=["pdf"])
+    # Add documents to the collection
+    collection.add(
+        documents=documents,
+        metadatas=metadatas,
+        ids=ids
+    )
 
-    if uploaded_file:
-        with st.spinner("Processing PDF..."):
-            # Save the uploaded file temporarily
-            with open("temp.pdf", "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            
-            chunks = load_pdf("temp.pdf")
-            vector_store = create_vector_db(chunks)
-            st.success("PDF processed successfully!")
+    print(f"Added {len(documents)} documents to collection '{collection_name}'")
 
-        rag_chain = create_rag_chain(vector_store)
-
-        query = st.text_input("Ask a question about the PDF:")
-        if query:
-            with st.spinner("Generating answer..."):
-                response = rag_chain.invoke(query)
-                st.write(response)
-
-        # Clean up the temporary file
-        os.remove("temp.pdf")
-
+# Example usage
 if __name__ == "__main__":
-    main()
+    collection_name = "my_collection"
+    documents = [
+        "This is the first document",
+        "This is the second document",
+        "This is the third document"
+    ]
+    metadatas = [
+        {"source": "document1.txt"},
+        {"source": "document2.txt"},
+        {"source": "document3.txt"}
+    ]
+    ids = ["doc1", "doc2", "doc3"]
+
+    store_vector_data(collection_name, documents, metadatas, ids)
