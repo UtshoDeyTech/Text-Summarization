@@ -10,3 +10,5 @@ streamlit
 requests 
 python-dotenv 
 openai
+pinecone
+pinecone-client

@@ -3,6 +3,7 @@ import requests
 import os
 from dotenv import load_dotenv
 from openai import OpenAI
+from pinecone_utils import initialize_pinecone
 
 # Load environment variables
 load_dotenv()
@@ -13,6 +14,9 @@ BACKEND_URL = "http://localhost:5000"
 # Set up OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# Initialize Pinecone
+index = initialize_pinecone()
+
 def get_pdf_list():
     try:
         response = requests.get(f"{BACKEND_URL}/list_pdfs")
@@ -22,13 +26,13 @@ def get_pdf_list():
         st.error(f"Error fetching PDF list: {str(e)}")
         return []
 
-def query_chromadb(query):
+def query_pinecone(query):
     try:
         response = requests.post(f"{BACKEND_URL}/search_chunks", json={"query": query, "n_results": 5})
         response.raise_for_status()
         return response.json()["results"]
     except requests.RequestException as e:
-        st.error(f"Error querying ChromaDB: {str(e)}")
+        st.error(f"Error querying Pinecone: {str(e)}")
         return []
 
 def get_openai_response(query, context):
@@ -52,9 +56,9 @@ def generate_simple_response(query, chunks):
         return f"Based on the most relevant information found:\n\n{most_relevant_chunk}\n\nThis information seems most pertinent to your query: '{query}'. Please note that this is a direct extract and not an AI-generated response."
     return "I couldn't find any relevant information to answer your query."
 
-def sync_chromadb():
+def sync_pinecone():
     try:
-        response = requests.post(f"{BACKEND_URL}/sync_chromadb")
+        response = requests.post(f"{BACKEND_URL}/sync_pinecone")
         response.raise_for_status()
         result = response.json()
         st.success(f"Synchronization complete. {result['message']}")
@@ -66,9 +70,9 @@ def sync_chromadb():
 def main():
     st.title("PDF Chatbot")
 
-    # Add a button to sync ChromaDB
-    if st.button("Sync ChromaDB with PDF folder"):
-        sync_chromadb()
+    # Add a button to sync Pinecone
+    if st.button("Sync Pinecone with PDF folder"):
+        sync_pinecone()
 
     # Check if any PDFs are uploaded
     pdfs = get_pdf_list()
@@ -87,8 +91,8 @@ def main():
             st.error("No PDFs available to answer questions. Please upload a PDF first.")
         else:
             with st.spinner("Searching for relevant information..."):
-                # Query ChromaDB using similarity search
-                relevant_chunks = query_chromadb(user_query)
+                # Query Pinecone using similarity search
+                relevant_chunks = query_pinecone(user_query)
 
                 if not relevant_chunks:
                     st.warning("No relevant information found in the uploaded PDFs.")
@@ -112,7 +116,7 @@ def main():
                     # Display the relevant chunks used for context
                     st.subheader("Relevant Information:")
                     for i, chunk in enumerate(relevant_chunks, 1):
-                        with st.expander(f"Chunk {i} (Similarity: {chunk['distance']:.4f})"):
+                        with st.expander(f"Chunk {i} (Score: {chunk['score']:.4f})"):
                             st.write(chunk['text'])
 
 if __name__ == "__main__":
