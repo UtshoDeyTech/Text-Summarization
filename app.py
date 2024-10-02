@@ -211,6 +211,10 @@ async def sync_pinecone():
     except Exception as e:
         logger.error(f"An error occurred during synchronization: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred during synchronization: {str(e)}")
+    
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
 
 if __name__ == "__main__":
     import uvicorn

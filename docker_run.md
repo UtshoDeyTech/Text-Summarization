@@ -63,4 +63,25 @@ This guide will walk you through the process of running the PDF Chatbot applicat
 
 - If you're using an older version of Docker that doesn't support Compose V2, you may need to use `docker-compose` (with a hyphen) instead of `docker compose`. In this case, replace `docker compose` with `docker-compose` in all the commands above.
 
+- If you encounter network-related issues during the build process, try the following:
+
+  a. Retry the build command:
+     ```
+     docker compose build --no-cache
+     ```
+
+  b. If the issue persists, try building with a different network:
+     ```
+     docker compose build --no-cache --network host
+     ```
+
+  c. Check your internet connection and try again after a few minutes.
+
+  d. If you're behind a proxy, ensure that your Docker is configured to use the proxy settings.
+
+- If you still encounter issues, please check the Docker logs for more detailed error messages:
+  ```
+  docker compose logs
+  ```
+
 Remember to never commit your `.env` file or share it publicly, as it contains sensitive API keys.

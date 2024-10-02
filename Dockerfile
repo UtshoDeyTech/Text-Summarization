@@ -7,8 +7,22 @@ WORKDIR /app
 # Copy the current directory contents into the container
 COPY . /app
 
+# Create a Python script for retrying pip install
+RUN echo 'import sys\n\
+from retrying import retry\n\
+from pip._internal.cli.main import main\n\
+\n\
+@retry(stop_max_attempt_number=5, wait_fixed=10000)\n\
+def install_requirements():\n\
+    sys.exit(main(["install", "--no-cache-dir", "-r", "requirements.txt", "--timeout", "100"]))\n\
+\n\
+if __name__ == "__main__":\n\
+    install_requirements()' > retry_install.py
+
 # Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir retrying && \
+    python retry_install.py
 
 # Start a new stage for a smaller final image
 FROM python:3.9-slim
