@@ -2,14 +2,15 @@ import os
 import logging
 import boto3
 from botocore.exceptions import ClientError
+from app.get_secret_key import get_secret
 
 logger = logging.getLogger(__name__)
 
-S3_REGION_NAME = os.getenv("S3_REGION_NAME")
-S3_END_POINT_URL = os.getenv("S3_END_POINT_URL")
-S3_ACCESS_KEY = os.getenv("S3_ACCESS_KEY")
-S3_SECRET_KEY = os.getenv("S3_SECRET_KEY")
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+S3_REGION_NAME = get_secret("S3_REGION_NAME")
+S3_END_POINT_URL = get_secret("S3_END_POINT_URL")
+S3_ACCESS_KEY = get_secret("S3_ACCESS_KEY")
+S3_SECRET_KEY = get_secret("S3_SECRET_KEY")
+S3_BUCKET_NAME = get_secret("S3_BUCKET_NAME")
 
 s3_client = boto3.client(
     "s3",
