@@ -1,0 +1,72 @@
+trigger:
+  branches:
+    include:
+      - dev
+pr:
+  branches:
+    include:
+      - dev
+
+pool:
+  vmImage: "ubuntu-latest"
+
+variables:
+  - group: askken_python_backend
+
+stages:
+  - stage: ASKKEN_PYTHON_API
+    displayName: "Build and Deploy to ASKKEN PYTHON API Development"
+    condition: eq(variables['Build.SourceBranch'], 'refs/heads/dev')
+    jobs:
+      - job: ANCAI
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: "3.9"
+              addToPath: true
+
+          - script: |
+              python -m pip install --upgrade pip
+              pip install awscli
+            displayName: "Install AWS CLI"
+
+          - script: |
+              mkdir -p /home/vsts/.aws
+              echo "[default]" > /home/vsts/.aws/credentials
+              echo "aws_access_key_id = $(AWS_ACCESS)" >> /home/vsts/.aws/credentials
+              echo "aws_secret_access_key = $(AWS_SECRET_ACCESS_KEY)" >> /home/vsts/.aws/credentials
+              echo "[default]" > /home/vsts/.aws/config
+              echo "region = $(AWS_REGION)" >> /home/vsts/.aws/config
+            displayName: "Configure AWS CLI"
+
+          - script: |
+              echo "Contents of AWS credentials file:"
+              cat /home/vsts/.aws/credentials | sed 's/.*=\s*\(.\{4\}\).*/&***/'
+              echo "Contents of AWS config file:"
+              cat /home/vsts/.aws/config
+            displayName: "Debug: Check AWS Credentials File"
+
+          - script: |
+              aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin 221082212820.dkr.ecr.us-east-1.amazonaws.com
+            displayName: "Login to AWS ECR"
+
+          - script: |
+              # Build the Docker image
+              docker build -t $(ASKKEN_PYTHON_IMAGE_NAME):$(Build.BuildId) .
+
+              # Tag the image for ECR
+              docker tag $(ASKKEN_PYTHON_IMAGE_NAME):$(Build.BuildId) 221082212820.dkr.ecr.$(AWS_REGION).amazonaws.com/$(ASKKEN_PYTHON_IMAGE_NAME):$(Build.BuildId)
+
+              # Push the image to ECR
+              docker push 221082212820.dkr.ecr.$(AWS_REGION).amazonaws.com/$(ASKKEN_PYTHON_IMAGE_NAME):$(Build.BuildId)
+            displayName: "Build and Push Docker Image to ECR"
+
+          - script: |
+              aws eks update-kubeconfig --name $(CLUSTER_NAME) --region $(AWS_REGION)
+            displayName: "Configure kubectl for Development"
+
+          - script: |
+              envsubst < ./deployments/deployment.tlp.yml > ./deployments/deployment.yml
+              sed -i 's/BUILD_NUMBER_PLACEHOLDER/$(Build.BuildId)/g' ./deployments/deployment.yml
+              kubectl apply -f ./deployments/deployment.yml
+            displayName: "Deploy to ASKKEN PYTHON API Development"

@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anc-python-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: anc-python-api
+  template:
+    metadata:
+      labels:
+        app: anc-python-api
+    spec:
+      containers:
+        - name: anc-python-api
+          image: ${ECR_REPOSITORY}/${ASKKEN_PYTHON_IMAGE_NAME}:BUILD_NUMBER_PLACEHOLDER
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: anc-python-api
+  labels:
+    app: anc-python-api
+spec:
+  selector:
+    app: anc-python-api
+  ports:
+    - name: pythonAPI
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
