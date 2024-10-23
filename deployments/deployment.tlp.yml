@@ -29,7 +29,7 @@ spec:
   selector:
     app: anc-python-api
   ports:
-    - name: pythonAPI
+    - name: python-api
       port: 8000
       targetPort: 8000
   type: ClusterIP
