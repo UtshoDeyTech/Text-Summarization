@@ -18,7 +18,7 @@ stages:
     displayName: "Build and Deploy to ASKKEN PYTHON API Development"
     condition: eq(variables['Build.SourceBranch'], 'refs/heads/dev')
     jobs:
-      - job: ANCAI
+      - job: ANCAI_PYTHON_BACKEND
         steps:
           - task: UsePythonVersion@0
             inputs:
