@@ -1,11 +1,7 @@
 import logging
 from fastapi import FastAPI
-from app.api import upload, delete, list, search, sync
-from app.get_secret_key import get_secret
-
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from app.api import upload, delete, list, search, sync, qa
+from app.service.log_client import logger
 
 # FastAPI app
 app = FastAPI()
@@ -17,6 +13,7 @@ app.include_router(delete.router)
 app.include_router(list.router)
 app.include_router(search.router)
 app.include_router(sync.router)
+app.include_router(qa.router)
 
 @app.get("/")
 async def root():

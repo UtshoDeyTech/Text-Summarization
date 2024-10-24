@@ -2,9 +2,9 @@ import logging
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from app.service.s3_storage import list_objects, S3_BUCKET_NAME
+from app.service.log_client import logger
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 @router.get("/list_pdfs")
 async def list_pdfs():

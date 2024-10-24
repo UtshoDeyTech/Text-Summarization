@@ -8,10 +8,11 @@ from io import BytesIO
 from app.service.s3_storage import upload_file, S3_BUCKET_NAME
 from app.service.openai_client import get_embeddings
 from app.service.pinecone_client import initialize_pinecone, upsert_vectors
+from app.service.log_client import logger
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
-text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+
+text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
 index = initialize_pinecone()
 
 def pdf_to_chunks(file_obj):

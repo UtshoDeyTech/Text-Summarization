@@ -2,8 +2,7 @@ import os
 import logging
 import openai
 from app.get_secret_key import get_secret
-
-logger = logging.getLogger(__name__)
+from app.service.log_client import logger
 
 # Set the API key
 openai.api_key = get_secret("OPENAI_API_KEY")
