@@ -4,9 +4,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from app.service.openai_client import get_embeddings
 from app.service.pinecone_client import initialize_pinecone, query_vectors
+from app.service.log_client import logger
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
+
 index = initialize_pinecone()
 
 class SearchQuery(BaseModel):

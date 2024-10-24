@@ -3,9 +3,10 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from app.service.s3_storage import delete_object, S3_BUCKET_NAME
 from app.service.pinecone_client import initialize_pinecone, delete_vectors, list_all_vectors
+from app.service.log_client import logger
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
+
 index = initialize_pinecone()
 
 @router.delete("/delete_pdf/{pdf_id}")

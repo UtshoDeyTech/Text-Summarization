@@ -2,10 +2,7 @@ import os
 import logging
 from pinecone import Pinecone, ServerlessSpec
 from app.get_secret_key import get_secret
-
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from app.service.log_client import logger
 
 # Load environment variables
 PINECONE_API_KEY = get_secret("PINECONE_API_KEY")

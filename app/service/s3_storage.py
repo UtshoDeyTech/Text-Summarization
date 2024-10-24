@@ -3,8 +3,7 @@ import logging
 import boto3
 from botocore.exceptions import ClientError
 from app.get_secret_key import get_secret
-
-logger = logging.getLogger(__name__)
+from app.service.log_client import logger
 
 S3_REGION_NAME = get_secret("S3_REGION_NAME")
 S3_END_POINT_URL = get_secret("S3_END_POINT_URL")
