@@ -12,12 +12,24 @@ spec:
       labels:
         app: anc-python-api
     spec:
+      serviceAccountName: secret-service-account
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: aws-secrets
       containers:
         - name: anc-python-api
           image: ${ECR_REPOSITORY}/${ASKKEN_PYTHON_IMAGE_NAME}:BUILD_NUMBER_PLACEHOLDER
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
+          volumeMounts:
+            - name: secrets-store
+              mountPath: "/mnt/secrets-store"
+              readOnly: true
 ---
 apiVersion: v1
 kind: Service
