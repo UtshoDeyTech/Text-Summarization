@@ -1,23 +1,23 @@
-import boto3
-import boto3.session
-import json
+import os
+from dotenv import load_dotenv
+from app.service.log_client import logger
 
-def get_secret(key : str):
-    secret_name = "askkenai.io"
-    region_name = "us-east-1"
-
-    session = boto3.session.Session()
-    client = session.client(
-        service_name="secretsmanager",
-        region_name=region_name
-    )
-
-    get_secret_value_response = client.get_secret_value(
-        SecretId=secret_name
-    )
-
-    secret = get_secret_value_response['SecretString']
-    # Convert JSON string to dict
-    secret_dict = json.loads(secret)
-
-    return secret_dict[key]
+def get_secret(key: str):
+    try:
+        # Load environment variables from .env file
+        load_dotenv()
+        logger.info(f"Loading environment variable: {key}")
+        
+        # Get the value from environment variables
+        value = os.getenv(key)
+        
+        if value is None:
+            logger.error(f"Key '{key}' not found in .env file")
+            raise KeyError(f"Key '{key}' not found in .env file")
+        
+        logger.info(f"Successfully retrieved value for key: {key}")
+        return value
+        
+    except Exception as e:
+        logger.error(f"Error retrieving secret for key {key}: {str(e)}")
+        raise
