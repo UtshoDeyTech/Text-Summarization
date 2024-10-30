@@ -41,8 +41,7 @@ spec:
             - name: BACKEND_URL
               value: "BACKEND_URL_PLACEHOLDER"
             - name: DEVELOPMENT_MODE
-              value: "DEVELOPMENT_MODE_PLACEHOLDER"
-              
+              value: "DEVELOPMENT_MODE_PLACEHOLDER"            
 ---
 apiVersion: v1
 kind: Service
