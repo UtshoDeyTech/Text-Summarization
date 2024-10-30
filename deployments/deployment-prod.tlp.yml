@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: askken-python-prod-api
+  namespace: prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: askken-python-prod-api
+  template:
+    metadata:
+      labels:
+        app: askken-python-prod-api
+    spec:
+      containers:
+        - name: askken-python-prod-api
+          image: ${ECR_REPOSITORY}/${ASKKEN_PYTHON_PROD_IMAGE_NAME}:BUILD_NUMBER_PLACEHOLDER
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+      env:
+        - name: TestVal
+          value: "TEST_VAL_PLACEHOLDER"
+        - name: OPENAI_API_KEY
+          value: "OPENAI_API_KEY_PLACEHOLDER"
+        - name: PINECONE_API_KEY
+          value: "PINECONE_API_KEY_PLACEHOLDER"
+        - name: PINECONE_ENVIRONMENT
+          value: "PINECONE_ENVIRONMENT_PLACEHOLDER"
+        - name: S3_REGION_NAME
+          value: "S3_REGION_NAME_PLACEHOLDER"
+        - name: S3_END_POINT_URL
+          value: "S3_END_POINT_URL_PLACEHOLDER"
+        - name: S3_ACCESS_KEY
+          value: "S3_ACCESS_KEY_PLACEHOLDER"
+        - name: S3_SECRET_KEY
+          value: "S3_SECRET_KEY_PLACEHOLDER"
+        - name: S3_BUCKET_NAME
+          value: "S3_BUCKET_NAME_PLACEHOLDER"
+        - name: BACKEND_URL
+          value: "BACKEND_URL_PLACEHOLDER"
+        - name: DEVELOPMENT_MODE
+          value: "DEVELOPMENT_MODE_PLACEHOLDER"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: askken-python-prod-api
+  namespace: prod
+  labels:
+    app: askken-python-prod-api
+spec:
+  selector:
+    app: askken-python-prod-api
+  ports:
+    - name: python-api
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP

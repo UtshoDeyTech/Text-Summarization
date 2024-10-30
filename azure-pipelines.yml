@@ -2,10 +2,12 @@ trigger:
   branches:
     include:
       - dev
+      - prod
 pr:
   branches:
     include:
       - dev
+      - prod
 
 pool:
   vmImage: "ubuntu-latest"
@@ -14,7 +16,7 @@ variables:
   - group: askken_python_backend
 
 stages:
-  - stage: ASKKEN_PYTHON_API
+  - stage: ASKKEN_PYTHON_API_FOR_Development
     displayName: "Build and Deploy to ASKKEN PYTHON API Development"
     condition: eq(variables['Build.SourceBranch'], 'refs/heads/dev')
     jobs:
@@ -52,13 +54,13 @@ stages:
 
           - script: |
               # Build the Docker image
-              docker build -t $(ASKKEN_PYTHON_IMAGE_NAME):$(Build.BuildId) .
+              docker build -t $(ASKKEN_PYTHON_DEV_IMAGE_NAME):$(Build.BuildId) .
 
               # Tag the image for ECR
-              docker tag $(ASKKEN_PYTHON_IMAGE_NAME):$(Build.BuildId) 221082212820.dkr.ecr.$(AWS_REGION).amazonaws.com/$(ASKKEN_PYTHON_IMAGE_NAME):$(Build.BuildId)
+              docker tag $(ASKKEN_PYTHON_DEV_IMAGE_NAME):$(Build.BuildId) 221082212820.dkr.ecr.$(AWS_REGION).amazonaws.com/$(ASKKEN_PYTHON_DEV_IMAGE_NAME):$(Build.BuildId)
 
               # Push the image to ECR
-              docker push 221082212820.dkr.ecr.$(AWS_REGION).amazonaws.com/$(ASKKEN_PYTHON_IMAGE_NAME):$(Build.BuildId)
+              docker push 221082212820.dkr.ecr.$(AWS_REGION).amazonaws.com/$(ASKKEN_PYTHON_DEV_IMAGE_NAME):$(Build.BuildId)
             displayName: "Build and Push Docker Image to ECR"
 
           - script: |
@@ -66,7 +68,86 @@ stages:
             displayName: "Configure kubectl for Development"
 
           - script: |
-              envsubst < ./deployments/deployment.tlp.yml > ./deployments/deployment.yml
-              sed -i 's/BUILD_NUMBER_PLACEHOLDER/$(Build.BuildId)/g' ./deployments/deployment.yml
-              kubectl apply -f ./deployments/deployment.yml
+              envsubst < ./deployments/deployment-dev.tlp.yml > ./deployments/deployment-dev.yml
+              sed -i 's/BUILD_NUMBER_PLACEHOLDER/$(Build.BuildId)/g' ./deployments/deployment-dev.yml              
+              sed -i 's/TEST_VAL_PLACEHOLDER/$(TestVal)/g' ./deployments/deployment-dev.yml
+              sed -i 's/OPENAI_API_KEY_PLACEHOLDER/$(OPENAI_API_KEY)/g' ./deployments/deployment-dev.yml
+              sed -i 's/PINECONE_API_KEY_PLACEHOLDER/$(PINECONE_API_KEY)/g' ./deployments/deployment-dev.yml
+              sed -i 's/PINECONE_ENVIRONMENT_PLACEHOLDER/$(PINECONE_ENVIRONMENT)/g' ./deployments/deployment-dev.yml
+              sed -i 's/S3_REGION_NAME_PLACEHOLDER/$(S3_REGION_NAME)/g' ./deployments/deployment-dev.yml
+              sed -i 's/S3_END_POINT_URL_PLACEHOLDER/$(S3_END_POINT_URL)/g' ./deployments/deployment-dev.yml
+              sed -i 's/S3_ACCESS_KEY_PLACEHOLDER/$(S3_ACCESS_KEY)/g' ./deployments/deployment-dev.yml
+              sed -i 's/S3_SECRET_KEY_PLACEHOLDER/$(S3_SECRET_KEY)/g' ./deployments/deployment-dev.yml
+              sed -i 's/S3_BUCKET_NAME_PLACEHOLDER/$(S3_BUCKET_NAME)/g' ./deployments/deployment-dev.yml
+              sed -i 's/BACKEND_URL_PLACEHOLDER/$(BACKEND_URL)/g' ./deployments/deployment-dev.yml
+              sed -i 's/DEVELOPMENT_MODE_PLACEHOLDER/$(DEVELOPMENT_MODE)/g' ./deployments/deployment-dev.yml
+              kubectl apply -f ./deployments/deployment-dev.yml
             displayName: "Deploy to ASKKEN PYTHON API Development"
+
+  - stage: ASKKEN_PYTHON_API_FOR_PRODUCTION
+    displayName: "Build and Deploy to ASKKEN PYTHON API Production"
+    condition: eq(variables['Build.SourceBranch'], 'refs/heads/prod')
+    jobs:
+      - job: ANCAI_PYTHON_BACKEND
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: "3.9"
+              addToPath: true
+
+          - script: |
+              python -m pip install --upgrade pip
+              pip install awscli
+            displayName: "Install AWS CLI"
+
+          - script: |
+              mkdir -p /home/vsts/.aws
+              echo "[default]" > /home/vsts/.aws/credentials
+              echo "aws_access_key_id = $(AWS_ACCESS)" >> /home/vsts/.aws/credentials
+              echo "aws_secret_access_key = $(AWS_SECRET_ACCESS_KEY)" >> /home/vsts/.aws/credentials
+              echo "[default]" > /home/vsts/.aws/config
+              echo "region = $(AWS_REGION)" >> /home/vsts/.aws/config
+            displayName: "Configure AWS CLI"
+
+          - script: |
+              echo "Contents of AWS credentials file:"
+              cat /home/vsts/.aws/credentials | sed 's/.*=\s*\(.\{4\}\).*/&***/'
+              echo "Contents of AWS config file:"
+              cat /home/vsts/.aws/config
+            displayName: "Debug: Check AWS Credentials File"
+
+          - script: |
+              aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin 221082212820.dkr.ecr.us-east-1.amazonaws.com
+            displayName: "Login to AWS ECR"
+
+          - script: |
+              # Build the Docker image
+              docker build -t $(ASKKEN_PYTHON_PROD_IMAGE_NAME):$(Build.BuildId) .
+
+              # Tag the image for ECR
+              docker tag $(ASKKEN_PYTHON_PROD_IMAGE_NAME):$(Build.BuildId) 221082212820.dkr.ecr.$(AWS_REGION).amazonaws.com/$(ASKKEN_PYTHON_PROD_IMAGE_NAME):$(Build.BuildId)
+
+              # Push the image to ECR
+              docker push 221082212820.dkr.ecr.$(AWS_REGION).amazonaws.com/$(ASKKEN_PYTHON_PROD_IMAGE_NAME):$(Build.BuildId)
+            displayName: "Build and Push Docker Image to ECR"
+
+          - script: |
+              aws eks update-kubeconfig --name $(CLUSTER_NAME) --region $(AWS_REGION)
+            displayName: "Configure kubectl for Production"
+
+          - script: |
+              envsubst < ./deployments/deployment-prod.tlp.yml > ./deployments/deployment-prod.yml
+              sed -i 's/BUILD_NUMBER_PLACEHOLDER/$(Build.BuildId)/g' ./deployments/deployment-prod.yml
+              sed -i 's/TEST_VAL_PLACEHOLDER/$(TestVal)/g' ./deployments/deployment-prod.yml
+              sed -i 's/OPENAI_API_KEY_PLACEHOLDER/$(OPENAI_API_KEY)/g' ./deployments/deployment-prod.yml
+              sed -i 's/PINECONE_API_KEY_PLACEHOLDER/$(PINECONE_API_KEY)/g' ./deployments/deployment-prod.yml
+              sed -i 's/PINECONE_ENVIRONMENT_PLACEHOLDER/$(PINECONE_ENVIRONMENT)/g' ./deployments/deployment-prod.yml
+              sed -i 's/S3_REGION_NAME_PLACEHOLDER/$(S3_REGION_NAME)/g' ./deployments/deployment-prod.yml
+              sed -i 's/S3_END_POINT_URL_PLACEHOLDER/$(S3_END_POINT_URL)/g' ./deployments/deployment-prod.yml
+              sed -i 's/S3_ACCESS_KEY_PLACEHOLDER/$(S3_ACCESS_KEY)/g' ./deployments/deployment-prod.yml
+              sed -i 's/S3_SECRET_KEY_PLACEHOLDER/$(S3_SECRET_KEY)/g' ./deployments/deployment-prod.yml
+              sed -i 's/S3_BUCKET_NAME_PLACEHOLDER/$(S3_BUCKET_NAME)/g' ./deployments/deployment-prod.yml
+              sed -i 's/BACKEND_URL_PLACEHOLDER/$(BACKEND_URL)/g' ./deployments/deployment-prod.yml
+              sed -i 's/DEVELOPMENT_MODE_PLACEHOLDER/$(DEVELOPMENT_MODE)/g' ./deployments/deployment-prod.yml
+              kubectl apply -f ./deployments/deployment-prod.yml
+            displayName: "Deploy to ASKKEN PYTHON API Production"
