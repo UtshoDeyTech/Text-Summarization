@@ -12,13 +12,13 @@ pr:
 pool:
   vmImage: "ubuntu-latest"
 
-variables:
-  - group: askken_python_backend
 
 stages:
   - stage: ASKKEN_PYTHON_API_FOR_Development
     displayName: "Build and Deploy to ASKKEN PYTHON API Development"
     condition: eq(variables['Build.SourceBranch'], 'refs/heads/dev')
+    variables:
+      - group: askken_python_backend_dev
     jobs:
       - job: ANCAI_PYTHON_BACKEND
         steps:
@@ -87,6 +87,8 @@ stages:
   - stage: ASKKEN_PYTHON_API_FOR_PRODUCTION
     displayName: "Build and Deploy to ASKKEN PYTHON API Production"
     condition: eq(variables['Build.SourceBranch'], 'refs/heads/prod')
+    variables:
+      - group: askken_python_backend_prod
     jobs:
       - job: ANCAI_PYTHON_BACKEND
         steps:
