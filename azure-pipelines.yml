@@ -69,18 +69,18 @@ stages:
 
           - script: |
               envsubst < ./deployments/deployment-dev.tlp.yml > ./deployments/deployment-dev.yml
-              sed -i 's/BUILD_NUMBER_PLACEHOLDER/$(Build.BuildId)/g' ./deployments/deployment-dev.yml              
-              sed -i 's/TEST_VAL_PLACEHOLDER/$(TestVal)/g' ./deployments/deployment-dev.yml
-              sed -i 's/OPENAI_API_KEY_PLACEHOLDER/$(OPENAI_API_KEY)/g' ./deployments/deployment-dev.yml
-              sed -i 's/PINECONE_API_KEY_PLACEHOLDER/$(PINECONE_API_KEY)/g' ./deployments/deployment-dev.yml
-              sed -i 's/PINECONE_ENVIRONMENT_PLACEHOLDER/$(PINECONE_ENVIRONMENT)/g' ./deployments/deployment-dev.yml
-              sed -i 's/S3_REGION_NAME_PLACEHOLDER/$(S3_REGION_NAME)/g' ./deployments/deployment-dev.yml
-              sed -i 's/S3_END_POINT_URL_PLACEHOLDER/$(S3_END_POINT_URL)/g' ./deployments/deployment-dev.yml
-              sed -i 's/S3_ACCESS_KEY_PLACEHOLDER/$(S3_ACCESS_KEY)/g' ./deployments/deployment-dev.yml
-              sed -i 's/S3_SECRET_KEY_PLACEHOLDER/$(S3_SECRET_KEY)/g' ./deployments/deployment-dev.yml
-              sed -i 's/S3_BUCKET_NAME_PLACEHOLDER/$(S3_BUCKET_NAME)/g' ./deployments/deployment-dev.yml
-              sed -i 's/BACKEND_URL_PLACEHOLDER/$(BACKEND_URL)/g' ./deployments/deployment-dev.yml
-              sed -i 's/DEVELOPMENT_MODE_PLACEHOLDER/$(DEVELOPMENT_MODE)/g' ./deployments/deployment-dev.yml
+              sed -i 's|BUILD_NUMBER_PLACEHOLDER|$(Build.BuildId)|g' ./deployments/deployment-dev.yml
+              sed -i 's|TEST_VAL_PLACEHOLDER|$(TestVal)|g' ./deployments/deployment-dev.yml
+              sed -i 's|OPENAI_API_KEY_PLACEHOLDER|$(OPENAI_API_KEY)|g' ./deployments/deployment-dev.yml
+              sed -i 's|PINECONE_API_KEY_PLACEHOLDER|$(PINECONE_API_KEY)|g' ./deployments/deployment-dev.yml
+              sed -i 's|PINECONE_ENVIRONMENT_PLACEHOLDER|$(PINECONE_ENVIRONMENT)|g' ./deployments/deployment-dev.yml
+              sed -i 's|S3_REGION_NAME_PLACEHOLDER|$(S3_REGION_NAME)|g' ./deployments/deployment-dev.yml
+              sed -i 's|S3_END_POINT_URL_PLACEHOLDER|$(S3_END_POINT_URL)|g' ./deployments/deployment-dev.yml
+              sed -i 's|S3_ACCESS_KEY_PLACEHOLDER|$(S3_ACCESS_KEY)|g' ./deployments/deployment-dev.yml
+              sed -i 's|S3_SECRET_KEY_PLACEHOLDER|$(S3_SECRET_KEY)|g' ./deployments/deployment-dev.yml
+              sed -i 's|S3_BUCKET_NAME_PLACEHOLDER|$(S3_BUCKET_NAME)|g' ./deployments/deployment-dev.yml
+              sed -i 's|BACKEND_URL_PLACEHOLDER|$(BACKEND_URL)|g' ./deployments/deployment-dev.yml
+              sed -i 's|DEVELOPMENT_MODE_PLACEHOLDER|$(DEVELOPMENT_MODE)|g' ./deployments/deployment-dev.yml
               kubectl apply -f ./deployments/deployment-dev.yml
             displayName: "Deploy to ASKKEN PYTHON API Development"
 
@@ -137,17 +137,17 @@ stages:
 
           - script: |
               envsubst < ./deployments/deployment-prod.tlp.yml > ./deployments/deployment-prod.yml
-              sed -i 's/BUILD_NUMBER_PLACEHOLDER/$(Build.BuildId)/g' ./deployments/deployment-prod.yml
-              sed -i 's/TEST_VAL_PLACEHOLDER/$(TestVal)/g' ./deployments/deployment-prod.yml
-              sed -i 's/OPENAI_API_KEY_PLACEHOLDER/$(OPENAI_API_KEY)/g' ./deployments/deployment-prod.yml
-              sed -i 's/PINECONE_API_KEY_PLACEHOLDER/$(PINECONE_API_KEY)/g' ./deployments/deployment-prod.yml
-              sed -i 's/PINECONE_ENVIRONMENT_PLACEHOLDER/$(PINECONE_ENVIRONMENT)/g' ./deployments/deployment-prod.yml
-              sed -i 's/S3_REGION_NAME_PLACEHOLDER/$(S3_REGION_NAME)/g' ./deployments/deployment-prod.yml
-              sed -i 's/S3_END_POINT_URL_PLACEHOLDER/$(S3_END_POINT_URL)/g' ./deployments/deployment-prod.yml
-              sed -i 's/S3_ACCESS_KEY_PLACEHOLDER/$(S3_ACCESS_KEY)/g' ./deployments/deployment-prod.yml
-              sed -i 's/S3_SECRET_KEY_PLACEHOLDER/$(S3_SECRET_KEY)/g' ./deployments/deployment-prod.yml
-              sed -i 's/S3_BUCKET_NAME_PLACEHOLDER/$(S3_BUCKET_NAME)/g' ./deployments/deployment-prod.yml
-              sed -i 's/BACKEND_URL_PLACEHOLDER/$(BACKEND_URL)/g' ./deployments/deployment-prod.yml
-              sed -i 's/DEVELOPMENT_MODE_PLACEHOLDER/$(DEVELOPMENT_MODE)/g' ./deployments/deployment-prod.yml
+              sed -i 's|BUILD_NUMBER_PLACEHOLDER|$(Build.BuildId)|g' ./deployments/deployment-prod.yml
+              sed -i 's|TEST_VAL_PLACEHOLDER|$(TestVal)|g' ./deployments/deployment-prod.yml
+              sed -i 's|OPENAI_API_KEY_PLACEHOLDER|$(OPENAI_API_KEY)|g' ./deployments/deployment-prod.yml
+              sed -i 's|PINECONE_API_KEY_PLACEHOLDER|$(PINECONE_API_KEY)|g' ./deployments/deployment-prod.yml
+              sed -i 's|PINECONE_ENVIRONMENT_PLACEHOLDER|$(PINECONE_ENVIRONMENT)|g' ./deployments/deployment-prod.yml
+              sed -i 's|S3_REGION_NAME_PLACEHOLDER|$(S3_REGION_NAME)|g' ./deployments/deployment-prod.yml
+              sed -i 's|S3_END_POINT_URL_PLACEHOLDER|$(S3_END_POINT_URL)|g' ./deployments/deployment-prod.yml
+              sed -i 's|S3_ACCESS_KEY_PLACEHOLDER|$(S3_ACCESS_KEY)|g' ./deployments/deployment-prod.yml
+              sed -i 's|S3_SECRET_KEY_PLACEHOLDER|$(S3_SECRET_KEY)|g' ./deployments/deployment-prod.yml
+              sed -i 's|S3_BUCKET_NAME_PLACEHOLDER|$(S3_BUCKET_NAME)|g' ./deployments/deployment-prod.yml
+              sed -i 's|BACKEND_URL_PLACEHOLDER|$(BACKEND_URL)|g' ./deployments/deployment-prod.yml
+              sed -i 's|DEVELOPMENT_MODE_PLACEHOLDER|$(DEVELOPMENT_MODE)|g' ./deployments/deployment-prod.yml
               kubectl apply -f ./deployments/deployment-prod.yml
             displayName: "Deploy to ASKKEN PYTHON API Production"
