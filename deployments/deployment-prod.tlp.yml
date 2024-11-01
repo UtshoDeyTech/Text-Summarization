@@ -42,8 +42,11 @@ spec:
               value: "BACKEND_URL_PLACEHOLDER"
             - name: DEVELOPMENT_MODE
               value: "DEVELOPMENT_MODE_PLACEHOLDER"
-              
-                          
+            - name: SEQ_URL
+              value: "SEQ_URL_PLACEHOLDER"
+            - name: SEQ_API_KEY
+              value: "SEQ_API_KEY_PLACEHOLDER"
+
 ---
 apiVersion: v1
 kind: Service
