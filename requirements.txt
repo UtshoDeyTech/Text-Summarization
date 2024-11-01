@@ -39,6 +39,7 @@ python-multipart==0.0.5
 PyYAML==6.0.2
 requests==2.32.3
 s3transfer==0.10.3
+seqlog==0.3.31
 six==1.16.0
 SQLAlchemy==2.0.36
 starlette==0.14.2
