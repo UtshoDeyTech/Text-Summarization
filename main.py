@@ -1,17 +1,22 @@
 import logging
 import os
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import upload, delete, list, search, sync, qa
-from app.service.log_client import logger
+from app.api import upload, delete, list, search, sync, qa, diagnostics  # Add diagnostics import
+from app.service.log_client import logger, log_api_request, log_error
+from time import time
 
 # Load environment variables
 load_dotenv()
 BACKEND_URL = os.getenv("BACKEND_URL", "askken.io")
 DEVELOPMENT_MODE = os.getenv("DEVELOPMENT_MODE", "False").lower() == "true"
 
-logger.info(f"Development mode: {DEVELOPMENT_MODE}")
+logger.info(
+    "Application starting",
+    development_mode=DEVELOPMENT_MODE,
+    backend_url=BACKEND_URL
+)
 
 # Initialize FastAPI app with conditional UI settings
 app = FastAPI(
@@ -19,7 +24,6 @@ app = FastAPI(
     redoc_url="/redoc" if DEVELOPMENT_MODE else None,
     openapi_url="/openapi.json" if DEVELOPMENT_MODE else None,
 )
-
 
 # Configure CORS
 origins = [
@@ -33,7 +37,7 @@ origins = [
     f"http://api.{BACKEND_URL}"        
 ]
 
-logger.info(f"Configured CORS origins: {origins}")
+logger.info("Configuring CORS", origins=origins)
 
 app.add_middleware(
     CORSMiddleware,
@@ -50,22 +54,44 @@ app.include_router(list.router)
 app.include_router(search.router)
 app.include_router(sync.router)
 app.include_router(qa.router)
+app.include_router(diagnostics.router)  # Add the diagnostics router
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time()
+    response = await call_next(request)
+    duration = time() - start_time
+    
+    log_api_request(
+        endpoint=str(request.url.path),
+        method=request.method,
+        status_code=response.status_code,
+        duration_ms=round(duration * 1000, 2),
+        client_host=request.client.host if request.client else None,
+        query_params=dict(request.query_params),
+    )
+    
+    return response
 
 @app.get("/")
 async def root():
-    logger.info("Root endpoint accessed")
+    log_api_request("/", "GET")
     return {
         "message": "PDF Processing API is running",
         "version": "1.0.0",
-        "docs": f"/docs" if DEVELOPMENT_MODE else "Not available in production"
+        "docs": f"/docs" if DEVELOPMENT_MODE else "Not available in production",
+        "diagnostics": "/diagnostics/system"  # Add link to diagnostics
     }
 
 @app.on_event("startup")
 async def startup_event():
-    logger.info(f"Backend URL: {BACKEND_URL}")
-    logger.info("Available endpoints:")
-    for route in app.routes:
-        logger.info(f"  {route.methods}{route.path}")
+    routes = [f"{route.methods} {route.path}" for route in app.routes]
+    logger.info(
+        "Application started",
+        backend_url=BACKEND_URL,
+        routes=routes,
+        development_mode=DEVELOPMENT_MODE
+    )
 
 if __name__ == "__main__":
     import uvicorn
