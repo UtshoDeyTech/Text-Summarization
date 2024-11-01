@@ -16,7 +16,7 @@ class FolderNameFilter(logging.Filter):
 def setup_logger():
     # Seq configuration
     SEQ_URL = os.getenv("SEQ_URL")
-    SEQ_API_KEY = os.getenv("SEQ_URL", None)
+    SEQ_API_KEY = os.getenv("SEQ_API_KEY", None)
 
     # Configure Seq logging
     seqlog.log_to_seq(
