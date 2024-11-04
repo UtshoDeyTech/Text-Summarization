@@ -2,7 +2,7 @@ import os
 import logging
 import openai
 from app.get_secret_key import get_secret
-from app.service.log_client import logger
+from app.service.log_client import logger, log_error
 
 # Set the API key
 openai.api_key = get_secret("OPENAI_API_KEY")
@@ -12,7 +12,12 @@ def get_embeddings(texts):
         if not isinstance(texts, list) or len(texts) == 0 or not all(isinstance(t, str) for t in texts):
             raise ValueError("Input must be a non-empty list of strings")
         
-        logger.info(f"First text (truncated): {texts[0][:100]}...")
+        # Log with text length and sample for better context
+        logger.info(
+            f"Getting embeddings | text_count={len(texts)}, "
+            f"first_text_sample={texts[0][:100]}..., "
+            f"total_characters={sum(len(t) for t in texts)}"
+        )
         
         # Check if we're using the new version of the openai library
         if hasattr(openai, 'Embedding'):
@@ -20,27 +25,40 @@ def get_embeddings(texts):
                 input=texts,
                 model="text-embedding-ada-002"
             )
-            return [embedding.embedding for embedding in response.data]
+            embeddings = [embedding.embedding for embedding in response.data]
         else:
             # Fallback for older versions of the openai library
             response = openai.Embedding.create(
                 input=texts,
                 model="text-embedding-ada-002"
             )
-            return [embedding['embedding'] for embedding in response['data']]
+            embeddings = [embedding['embedding'] for embedding in response['data']]
+            
+        logger.info(
+            f"Successfully generated embeddings | "
+            f"count={len(embeddings)}, "
+            f"dimensions={len(embeddings[0])}"
+        )
+        
+        return embeddings
+        
     except Exception as e:
-        logger.error(f"Error getting embeddings: {str(e)}")
+        error_msg = f"Error getting embeddings | error_type={type(e).__name__}, error={str(e)}"
+        logger.error(error_msg)
         raise
 
 # Test function
 def test_get_embeddings():
     test_texts = ["Hello, world!", "This is a test."]
     try:
+        logger.info(f"Starting embedding test | test_texts_count={len(test_texts)}")
         embeddings = get_embeddings(test_texts)
-        print(f"Successfully generated {len(embeddings)} embeddings.")
-        print(f"First embedding (first 5 values): {embeddings[0][:5]}")
+        logger.info(
+            f"Test successful | embeddings_count={len(embeddings)}, "
+            f"first_embedding_sample={embeddings[0][:5]}"
+        )
     except Exception as e:
-        print(f"Error in test_get_embeddings: {str(e)}")
+        logger.error(f"Test failed | error_type={type(e).__name__}, error={str(e)}")
 
 if __name__ == "__main__":
     test_get_embeddings()

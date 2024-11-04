@@ -17,9 +17,15 @@ async def verify_headers(
         Tuple[str, str]: A tuple containing the validated (authorization, accept) headers
     """
     try:
-        # Just check if headers are present and not empty
+        logger.info(
+            f"Verifying headers | "
+            f"has_authorization={bool(authorization and authorization.strip())}, "
+            f"has_accept={bool(accept and accept.strip())}"
+        )
+        
+        # Check Authorization header
         if not authorization or authorization.strip() == "":
-            logger.error("Missing Authorization header")
+            logger.error("Header verification failed | header=Authorization, reason=missing_or_empty")
             raise HTTPException(
                 status_code=401,
                 detail={
@@ -28,8 +34,9 @@ async def verify_headers(
                 }
             )
         
+        # Check Accept header
         if not accept or accept.strip() == "":
-            logger.error("Missing Accept header")
+            logger.error("Header verification failed | header=Accept, reason=missing_or_empty")
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -38,14 +45,23 @@ async def verify_headers(
                 }
             )
         
-        # Log successful header verification
-        logger.info("Headers verified successfully")
+        # Log successful verification
+        logger.info(
+            f"Header verification successful | "
+            f"auth_length={len(authorization)}, "
+            f"accept_value={accept}"
+        )
         return authorization, accept
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error during header verification: {str(e)}")
+        error_msg = (
+            f"Header verification failed | "
+            f"error_type={type(e).__name__}, "
+            f"error={str(e)}"
+        )
+        logger.error(error_msg)
         raise HTTPException(
             status_code=500,
             detail={
