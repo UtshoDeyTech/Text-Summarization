@@ -20,20 +20,26 @@ class QuestionRequest(BaseModel):
 
 async def get_relevant_chunks(question: str, max_chunks: int, user_id: str) -> List[dict]:
     try:
+        logger.info(f"Getting relevant chunks | user_id={user_id}, question_length={len(question)}, max_chunks={max_chunks}")
         question_embedding = get_embeddings([question])[0]
         results = query_vectors(user_id, question_embedding, top_k=max_chunks)
-        return [{
+        
+        chunks = [{
             "text": result.metadata.get('text', ''),
             "pdf_id": result.metadata.get('pdf_id', ''),
             "filename": result.metadata.get('filename', ''),
             "score": result.score
         } for result in results]
+        
+        logger.info(f"Retrieved chunks | user_id={user_id}, chunks_found={len(chunks)}")
+        return chunks
     except Exception as e:
-        logger.error(f"Error getting relevant chunks for user {user_id}: {str(e)}")
+        logger.error(f"Chunk retrieval failed | user_id={user_id}, error_type={type(e).__name__}, error={str(e)}")
         raise
 
 async def generate_answer(question: str, context_chunks: List[dict], model: str) -> str:
     try:
+        logger.info(f"Generating answer | model={model}, context_chunks={len(context_chunks)}")
         context = "\n\n".join([chunk["text"] for chunk in context_chunks])
         prompt = f"""Based on the following context, answer the question. 
         If the answer cannot be found in the context, say "I cannot find an answer to this question in the provided documents."
@@ -55,13 +61,16 @@ async def generate_answer(question: str, context_chunks: List[dict], model: str)
             max_tokens=500
         )
         
-        return response.choices[0].message.content
+        answer = response.choices[0].message.content
+        logger.info(f"Answer generation successful | model={model}, answer_length={len(answer)}")
+        return answer
     except Exception as e:
-        logger.error(f"Error generating answer: {str(e)}")
+        logger.error(f"Answer generation failed | model={model}, error_type={type(e).__name__}, error={str(e)}")
         raise
 
 async def generate_question_suggestions(context_chunks: List[dict], n_suggestions: int, model: str) -> List[str]:
     try:
+        logger.info(f"Generating question suggestions | model={model}, n_suggestions={n_suggestions}")
         context = "\n\n".join([chunk["text"] for chunk in context_chunks])
         prompt = f"""Based on the following text, generate exactly {n_suggestions} relevant questions that can be answered using this content.
         Format: Number each question (1., 2., etc.)
@@ -87,9 +96,10 @@ async def generate_question_suggestions(context_chunks: List[dict], n_suggestion
                 question = line.split('.', 1)[1].strip()
                 suggested_questions.append(question)
         
+        logger.info(f"Question suggestions generated | count={len(suggested_questions)}")
         return suggested_questions
     except Exception as e:
-        logger.error(f"Error generating question suggestions: {str(e)}")
+        logger.error(f"Question suggestion generation failed | model={model}, error_type={type(e).__name__}, error={str(e)}")
         raise
 
 @router.post("/{user_id}/ask")
@@ -98,10 +108,17 @@ async def ask_question(
     user_id: str,
     question_request: QuestionRequest
 ):
-    headers = request.headers
-    
     try:
+        logger.info(
+            f"Processing question request | "
+            f"user_id={user_id}, "
+            f"model={question_request.model}, "
+            f"max_chunks={question_request.max_chunks}, "
+            f"num_suggestions={question_request.num_suggestions}"
+        )
+        
         if not (1 <= question_request.num_suggestions <= 10):
+            logger.warning(f"Invalid suggestion count | user_id={user_id}, num_suggestions={question_request.num_suggestions}")
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -117,6 +134,7 @@ async def ask_question(
         )
         
         if not relevant_chunks:
+            logger.info(f"No relevant chunks found | user_id={user_id}")
             return JSONResponse(content={
                 "user_id": user_id,
                 "answer": "No relevant information found in your documents.",
@@ -137,6 +155,13 @@ async def ask_question(
             question_request.model
         )
         
+        logger.info(
+            f"Question processing successful | "
+            f"user_id={user_id}, "
+            f"answer_length={len(answer)}, "
+            f"suggestions_count={len(suggested_questions)}"
+        )
+        
         return JSONResponse(content={
             "user_id": user_id,
             "question": question_request.question,
@@ -145,8 +170,15 @@ async def ask_question(
             "model_used": question_request.model,
             "status_code": "200"
         })
+        
     except Exception as e:
-        logger.error(f"Error processing question for user {user_id}: {str(e)}")
+        error_msg = (
+            f"Question processing failed | "
+            f"user_id={user_id}, "
+            f"error_type={type(e).__name__}, "
+            f"error={str(e)}"
+        )
+        logger.error(error_msg)
         raise HTTPException(
             status_code=500,
             detail={
