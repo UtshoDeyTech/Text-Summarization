@@ -97,10 +97,9 @@ async def shutdown_event():
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("Starting FastAPI server | host=0.0.0.0, port=8000")
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=8000,
-        log_config=None  # Disable uvicorn's default logging
+        log_config=None  
     )
