@@ -21,7 +21,7 @@ text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=20
 
 
 def create_doc_info(payload, headers):
-    url = f"{os.getenv("ASP_BACKEND_URL")}/api/docinfo/createdocinfo"
+    url = f"https://{os.getenv("ASP_BACKEND_URL")}/api/docinfo/createdocinfo"
     
     
     try:
