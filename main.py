@@ -22,6 +22,7 @@ app = FastAPI(
     openapi_url="/openapi.json" if DEVELOPMENT_MODE else None,
 )
 
+
 # Configure CORS
 origins = [
     "http://localhost:3000",           
