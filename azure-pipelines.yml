@@ -57,10 +57,10 @@ stages:
               docker build -t $(ASKKEN_PYTHON_DEV_IMAGE_NAME):$(Build.BuildId) .
 
               # Tag the image for ECR
-              docker tag $(ASKKEN_PYTHON_DEV_IMAGE_NAME):$(Build.BuildId) 221082212820.dkr.ecr.$(AWS_REGION).amazonaws.com/$(ASKKEN_PYTHON_DEV_IMAGE_NAME):$(Build.BuildId)
+              docker tag $(ASKKEN_PYTHON_DEV_IMAGE_NAME):$(Build.BuildId) $(ECR_REPOSITORY)/$(ASKKEN_PYTHON_DEV_IMAGE_NAME):$(Build.BuildId)
 
               # Push the image to ECR
-              docker push 221082212820.dkr.ecr.$(AWS_REGION).amazonaws.com/$(ASKKEN_PYTHON_DEV_IMAGE_NAME):$(Build.BuildId)
+              docker push $(ECR_REPOSITORY)/$(ASKKEN_PYTHON_DEV_IMAGE_NAME):$(Build.BuildId)
             displayName: "Build and Push Docker Image to ECR"
 
           - script: |
@@ -129,10 +129,10 @@ stages:
               docker build -t $(ASKKEN_PYTHON_PROD_IMAGE_NAME):$(Build.BuildId) .
 
               # Tag the image for ECR
-              docker tag $(ASKKEN_PYTHON_PROD_IMAGE_NAME):$(Build.BuildId) 221082212820.dkr.ecr.$(AWS_REGION).amazonaws.com/$(ASKKEN_PYTHON_PROD_IMAGE_NAME):$(Build.BuildId)
+              docker tag $(ASKKEN_PYTHON_PROD_IMAGE_NAME):$(Build.BuildId) $(ECR_REPOSITORY)/$(ASKKEN_PYTHON_PROD_IMAGE_NAME):$(Build.BuildId)
 
               # Push the image to ECR
-              docker push 221082212820.dkr.ecr.$(AWS_REGION).amazonaws.com/$(ASKKEN_PYTHON_PROD_IMAGE_NAME):$(Build.BuildId)
+              docker push $(ECR_REPOSITORY)/$(ASKKEN_PYTHON_PROD_IMAGE_NAME):$(Build.BuildId)
             displayName: "Build and Push Docker Image to ECR"
 
           - script: |
