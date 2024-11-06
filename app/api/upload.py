@@ -1,6 +1,6 @@
 import uuid
 import logging
-from fastapi import APIRouter, UploadFile, File, HTTPException, Request
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
 from PyPDF2 import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -9,9 +9,42 @@ from app.service.s3_storage import upload_file, S3_BUCKET_NAME
 from app.service.openai_client import get_embeddings
 from app.service.pinecone_client import upsert_vectors
 from app.service.log_client import logger
+import requests
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 router = APIRouter()
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
+
+
+def create_doc_info(payload, headers):
+    url = f"{os.getenv("ASP_BACKEND_URL")}/api/docinfo/createdocinfo"
+    
+    
+    try:
+        response = requests.post(
+            url, 
+            json=payload,
+            headers=headers
+        )
+        
+        response_data = response.json()
+        print("Status Code:", response_data.get('status_code'))
+        
+        if response_data.get('status_code') != "200":
+            error_message = response_data.get('error_messages', ['Something went wrong'])[0]
+            raise Exception(error_message)
+            
+        print("Response Data:")
+        print(response_data)
+        return response_data
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Error creating doc info: {e}")
+        return None
 
 def pdf_to_chunks(file_obj):
     try:
@@ -37,6 +70,7 @@ def pdf_to_chunks(file_obj):
 async def upload_pdf(
     request: Request,
     user_id: str,
+    BEARER_TOKEN: str = Form(...),
     file: UploadFile = File(...)
 ):
     try:
@@ -57,7 +91,7 @@ async def upload_pdf(
                 }
             )
         
-        pdf_id = str(uuid.uuid4())
+        pdf_id = f"{file.filename}----{str(uuid.uuid4())}"
         object_name = f"{user_id}/{pdf_id}.pdf"
         logger.info(f"Generated PDF ID | user_id={user_id}, pdf_id={pdf_id}")
         
@@ -117,13 +151,30 @@ async def upload_pdf(
             f"file_size={file_size}, "
             f"chunks_stored={len(chunks)}"
         )
+
+        payload = {
+        "userid": user_id,
+        "name": pdf_id,
+        "s3url": s3_url,
+        "s3path": f"{S3_BUCKET_NAME}/{user_id}",
+        "vectorid": f"pdf-vectors-{user_id}"
+        }
+        headers = {
+        'accept': 'application/json',
+        'Authorization': f'Bearer {BEARER_TOKEN}',
+        'Content-Type': 'application/json'
+        }
+
+        response = create_doc_info(payload, headers)
         
         return JSONResponse(
             content={
-                "pdf_id": pdf_id, 
+                "pdf_id": pdf_id,
+                "file_name": file.filename, 
                 "user_id": user_id,
                 "chunks_stored": len(chunks), 
                 "s3_url": s3_url,
+                "response": response,
                 "status_code": "200"
             }
         )
