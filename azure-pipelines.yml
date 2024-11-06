@@ -12,7 +12,6 @@ pr:
 pool:
   vmImage: "ubuntu-latest"
 
-
 stages:
   - stage: ASKKEN_PYTHON_API_FOR_Development
     displayName: "Build and Deploy to ASKKEN PYTHON API Development"
