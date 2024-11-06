@@ -82,6 +82,7 @@ stages:
               sed -i 's|DEVELOPMENT_MODE_PLACEHOLDER|$(DEVELOPMENT_MODE)|g' ./deployments/deployment-dev.yml
               sed -i 's|SEQ_URL_PLACEHOLDER|$(SEQ_URL)|g' ./deployments/deployment-dev.yml
               sed -i 's|SEQ_API_KEY_PLACEHOLDER|$(SEQ_API_KEY)|g' ./deployments/deployment-dev.yml
+              sed -i 's|ASP_BACKEND_URL_PLACEHOLDER|$(ASP_BACKEND_URL)|g' ./deployments/deployment-dev.yml
               kubectl apply -f ./deployments/deployment-dev.yml
             displayName: "Deploy to ASKKEN PYTHON API Development"
 
@@ -154,5 +155,6 @@ stages:
               sed -i 's|DEVELOPMENT_MODE_PLACEHOLDER|$(DEVELOPMENT_MODE)|g' ./deployments/deployment-prod.yml
               sed -i 's|SEQ_URL_PLACEHOLDER|$(SEQ_URL)|g' ./deployments/deployment-prod.yml
               sed -i 's|SEQ_API_KEY_PLACEHOLDER|$(SEQ_API_KEY)|g' ./deployments/deployment-prod.yml
+              sed -i 's|ASP_BACKEND_URL_PLACEHOLDER|$(ASP_BACKEND_URL)|g' ./deployments/deployment-prod.yml
               kubectl apply -f ./deployments/deployment-prod.yml
             displayName: "Deploy to ASKKEN PYTHON API Production"
