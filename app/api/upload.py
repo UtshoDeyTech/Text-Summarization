@@ -19,11 +19,11 @@ load_dotenv()
 router = APIRouter()
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
 
-# ASP_BACKEND_URL=os.getenv("ASP_BACKEND_URL")
+ASP_BACKEND_URL=os.getenv("ASP_BACKEND_URL")
 
 def create_doc_info(payload, headers):
-    url = "https://asp-api-dev.askken.io/api/docinfo/createdocinfo"
-    
+
+    url = f"{ASP_BACKEND_URL}/api/docinfo/createdocinfo"
     
     try:
         response = requests.post(
