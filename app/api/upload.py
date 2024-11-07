@@ -23,7 +23,7 @@ text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=20
 
 def create_doc_info(payload, headers):
 
-    url = f"https://asp-api-dev.askken.io/api/docinfo/createdocinfo"
+    url = "https://asp-api-dev.askken.io/api/docinfo/createdocinfo"
     
     try:
         response = requests.post(
