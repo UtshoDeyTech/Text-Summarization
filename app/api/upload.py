@@ -23,7 +23,7 @@ ASP_BACKEND_URL=os.getenv("ASP_BACKEND_URL")
 
 def create_doc_info(payload, headers):
 
-    url = f"{ASP_BACKEND_URL}/api/docinfo/createdocinfo"
+    url = f"https://asp-api-dev.askken.io/api/docinfo/createdocinfo"
     
     try:
         response = requests.post(
