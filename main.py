@@ -27,10 +27,7 @@ app = FastAPI(
 origins = [
     "http://localhost:3000",           
     "http://localhost:8000",           
-    f"https://*.{BACKEND_URL}",  # Allow all HTTPS subdomains
-    f"http://*.{BACKEND_URL}",   # Allow all HTTP subdomains
-    f"https://{BACKEND_URL}",    # Allow main domain with HTTPS
-    f"http://{BACKEND_URL}",     # Allow main domain with HTTP      
+    "*"
 ]
 
 logger.info(f"Configuring CORS | origins={origins}")
