@@ -19,7 +19,7 @@ load_dotenv()
 router = APIRouter()
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
 
-ASP_BACKEND_URL=os.getenv("ASP_BACKEND_URL")
+# ASP_BACKEND_URL=os.getenv("ASP_BACKEND_URL")
 
 def create_doc_info(payload, headers):
 
