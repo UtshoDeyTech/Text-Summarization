@@ -22,16 +22,12 @@ app = FastAPI(
     openapi_url="/openapi.json" if DEVELOPMENT_MODE else None,
 )
 
+
 # Configure CORS
 origins = [
     "http://localhost:3000",           
     "http://localhost:8000",           
-    f"https://{BACKEND_URL}",          
-    f"https://www.{BACKEND_URL}",      
-    f"https://api.{BACKEND_URL}",      
-    f"http://{BACKEND_URL}",           
-    f"http://www.{BACKEND_URL}",       
-    f"http://api.{BACKEND_URL}"        
+    "*"
 ]
 
 logger.info(f"Configuring CORS | origins={origins}")
@@ -97,9 +93,10 @@ async def shutdown_event():
 
 if __name__ == "__main__":
     import uvicorn
+    logger.info("Starting FastAPI server")
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=8000,
-        log_config=None  
+        log_config=None  # Disable uvicorn's default logging
     )

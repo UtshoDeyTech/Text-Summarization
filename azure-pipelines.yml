@@ -12,7 +12,6 @@ pr:
 pool:
   vmImage: "ubuntu-latest"
 
-
 stages:
   - stage: ASKKEN_PYTHON_API_FOR_Development
     displayName: "Build and Deploy to ASKKEN PYTHON API Development"
@@ -57,10 +56,10 @@ stages:
               docker build -t $(ASKKEN_PYTHON_DEV_IMAGE_NAME):$(Build.BuildId) .
 
               # Tag the image for ECR
-              docker tag $(ASKKEN_PYTHON_DEV_IMAGE_NAME):$(Build.BuildId) 221082212820.dkr.ecr.$(AWS_REGION).amazonaws.com/$(ASKKEN_PYTHON_DEV_IMAGE_NAME):$(Build.BuildId)
+              docker tag $(ASKKEN_PYTHON_DEV_IMAGE_NAME):$(Build.BuildId) $(ECR_REPOSITORY)/$(ASKKEN_PYTHON_DEV_IMAGE_NAME):$(Build.BuildId)
 
               # Push the image to ECR
-              docker push 221082212820.dkr.ecr.$(AWS_REGION).amazonaws.com/$(ASKKEN_PYTHON_DEV_IMAGE_NAME):$(Build.BuildId)
+              docker push $(ECR_REPOSITORY)/$(ASKKEN_PYTHON_DEV_IMAGE_NAME):$(Build.BuildId)
             displayName: "Build and Push Docker Image to ECR"
 
           - script: |
@@ -83,6 +82,7 @@ stages:
               sed -i 's|DEVELOPMENT_MODE_PLACEHOLDER|$(DEVELOPMENT_MODE)|g' ./deployments/deployment-dev.yml
               sed -i 's|SEQ_URL_PLACEHOLDER|$(SEQ_URL)|g' ./deployments/deployment-dev.yml
               sed -i 's|SEQ_API_KEY_PLACEHOLDER|$(SEQ_API_KEY)|g' ./deployments/deployment-dev.yml
+              # sed -i 's|ASP_BACKEND_URL_PLACEHOLDER|$(ASP_BACKEND_URL)|g' ./deployments/deployment-dev.yml
               kubectl apply -f ./deployments/deployment-dev.yml
             displayName: "Deploy to ASKKEN PYTHON API Development"
 
@@ -98,6 +98,7 @@ stages:
             inputs:
               versionSpec: "3.9"
               addToPath: true
+
 
           - script: |
               python -m pip install --upgrade pip
@@ -129,10 +130,10 @@ stages:
               docker build -t $(ASKKEN_PYTHON_PROD_IMAGE_NAME):$(Build.BuildId) .
 
               # Tag the image for ECR
-              docker tag $(ASKKEN_PYTHON_PROD_IMAGE_NAME):$(Build.BuildId) 221082212820.dkr.ecr.$(AWS_REGION).amazonaws.com/$(ASKKEN_PYTHON_PROD_IMAGE_NAME):$(Build.BuildId)
+              docker tag $(ASKKEN_PYTHON_PROD_IMAGE_NAME):$(Build.BuildId) $(ECR_REPOSITORY)/$(ASKKEN_PYTHON_PROD_IMAGE_NAME):$(Build.BuildId)
 
               # Push the image to ECR
-              docker push 221082212820.dkr.ecr.$(AWS_REGION).amazonaws.com/$(ASKKEN_PYTHON_PROD_IMAGE_NAME):$(Build.BuildId)
+              docker push $(ECR_REPOSITORY)/$(ASKKEN_PYTHON_PROD_IMAGE_NAME):$(Build.BuildId)
             displayName: "Build and Push Docker Image to ECR"
 
           - script: |
@@ -155,5 +156,6 @@ stages:
               sed -i 's|DEVELOPMENT_MODE_PLACEHOLDER|$(DEVELOPMENT_MODE)|g' ./deployments/deployment-prod.yml
               sed -i 's|SEQ_URL_PLACEHOLDER|$(SEQ_URL)|g' ./deployments/deployment-prod.yml
               sed -i 's|SEQ_API_KEY_PLACEHOLDER|$(SEQ_API_KEY)|g' ./deployments/deployment-prod.yml
+              # sed -i 's|ASP_BACKEND_URL_PLACEHOLDER|$(ASP_BACKEND_URL)|g' ./deployments/deployment-prod.yml
               kubectl apply -f ./deployments/deployment-prod.yml
             displayName: "Deploy to ASKKEN PYTHON API Production"

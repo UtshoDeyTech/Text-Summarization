@@ -45,8 +45,9 @@ spec:
               value: "SEQ_URL_PLACEHOLDER"
             - name: SEQ_API_KEY
               value: "SEQ_API_KEY_PLACEHOLDER"
+            # - name: ASP_BACKEND_URL
+            #   value: "ASP_BACKEND_URL_PLACEHOLDER"
 
-              
 ---
 apiVersion: v1
 kind: Service
