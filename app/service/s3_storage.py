@@ -77,11 +77,28 @@ def delete_object(bucket, object_name):
     """Delete an object from S3 bucket"""
     try:
         logger.info(f"Starting object deletion | bucket={bucket}, object={object_name}")
-        s3_client.delete_object(Bucket=bucket, Key=object_name)
-        logger.info(f"Object deletion successful | bucket={bucket}, object={object_name}")
         
-    except ClientError as e:
-        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+        # First verify object exists
+        try:
+            s3_client.head_object(Bucket=bucket, Key=object_name)
+        except ClientError:
+            logger.error(f"Object not found | bucket={bucket}, object={object_name}")
+            raise
+            
+        # Delete the object
+        s3_client.delete_object(Bucket=bucket, Key=object_name)
+        
+        # Verify deletion
+        try:
+            s3_client.head_object(Bucket=bucket, Key=object_name)
+            logger.error(f"Object still exists after deletion | bucket={bucket}, object={object_name}")
+            raise Exception("Object deletion failed - object still exists")
+        except ClientError:
+            # This is expected - object should not exist
+            logger.info(f"Object deletion successful | bucket={bucket}, object={object_name}")
+            
+    except Exception as e:
+        error_code = getattr(e, 'response', {}).get('Error', {}).get('Code', 'Unknown')
         logger.error(f"Object deletion failed | bucket={bucket}, object={object_name}, error_code={error_code}, error={str(e)}")
         raise
 
