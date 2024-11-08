@@ -5,9 +5,19 @@ from fastapi.responses import JSONResponse
 from PyPDF2 import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from io import BytesIO
-from app.service.s3_storage import upload_file, S3_BUCKET_NAME
+from botocore.exceptions import ClientError
+from app.service.s3_storage import (
+    upload_file, 
+    delete_object, 
+    s3_client, 
+    S3_BUCKET_NAME
+)
 from app.service.openai_client import get_embeddings
-from app.service.pinecone_client import upsert_vectors
+from app.service.pinecone_client import (
+    upsert_vectors,
+    list_all_vectors,
+    delete_vectors
+)
 from app.service.log_client import logger
 import requests
 import os
@@ -19,10 +29,7 @@ load_dotenv()
 router = APIRouter()
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
 
-# ASP_BACKEND_URL=os.getenv("ASP_BACKEND_URL")
-
 def create_doc_info(payload, headers):
-
     url = "https://asp-api-dev.askken.io/api/docinfo/createdocinfo"
     
     try:
@@ -74,12 +81,14 @@ async def upload_pdf(
     BEARER_TOKEN: str = Form(...),
     file: UploadFile = File(...)
 ):
+    is_overwrite = True
     try:
         logger.info(
             f"Starting PDF upload | "
             f"user_id={user_id}, "
             f"filename={file.filename}, "
-            f"content_type={file.content_type}"
+            f"content_type={file.content_type}, "
+            f"is_overwrite={is_overwrite}"
         )
 
         if file.filename.split('.')[-1].lower() != 'pdf':
@@ -92,9 +101,50 @@ async def upload_pdf(
                 }
             )
         
-        pdf_id = f"{file.filename}----{str(uuid.uuid4())}"
-        object_name = f"{user_id}/{pdf_id}.pdf"
-        logger.info(f"Generated PDF ID | user_id={user_id}, pdf_id={pdf_id}")
+        pdf_id = file.filename
+        object_name = f"{user_id}/{pdf_id}"
+        
+        # Check if file exists in S3
+        try:
+            s3_client.head_object(Bucket=S3_BUCKET_NAME, Key=object_name)
+            file_exists_s3 = True
+        except ClientError:
+            file_exists_s3 = False
+            
+        # Check if file exists in Pinecone
+        all_vectors = list_all_vectors(user_id)
+        file_exists_pinecone = any(v.metadata.get('pdf_id') == pdf_id for v in all_vectors)
+        
+        # If file exists in either location and overwrite is not allowed
+        if (file_exists_s3 or file_exists_pinecone) and not is_overwrite:
+            logger.warning(
+                f"File already exists and overwrite not allowed | "
+                f"user_id={user_id}, "
+                f"pdf_id={pdf_id}, "
+                f"exists_s3={file_exists_s3}, "
+                f"exists_pinecone={file_exists_pinecone}"
+            )
+            return JSONResponse(
+                status_code=409,  # Conflict
+                content={
+                    "status_code": "409",
+                    "error_messages": ["File already exists. Set is_overwrite=True to overwrite."],
+                    "pdf_id": pdf_id,
+                    "exists_in_s3": file_exists_s3,
+                    "exists_in_pinecone": file_exists_pinecone
+                }
+            )
+        
+        # If overwriting, delete existing file and vectors
+        if (file_exists_s3 or file_exists_pinecone) and is_overwrite:
+            logger.info(f"Overwriting existing file | user_id={user_id}, pdf_id={pdf_id}")
+            
+            if file_exists_s3:
+                delete_object(S3_BUCKET_NAME, object_name)
+                
+            if file_exists_pinecone:
+                ids_to_delete = [v.id for v in all_vectors if v.metadata.get('pdf_id') == pdf_id]
+                delete_vectors(user_id, ids_to_delete)
         
         # Read file content
         file_content = await file.read()
@@ -150,20 +200,21 @@ async def upload_pdf(
             f"user_id={user_id}, "
             f"pdf_id={pdf_id}, "
             f"file_size={file_size}, "
-            f"chunks_stored={len(chunks)}"
+            f"chunks_stored={len(chunks)}, "
+            f"was_overwrite={is_overwrite and (file_exists_s3 or file_exists_pinecone)}"
         )
 
         payload = {
-        "userid": user_id,
-        "name": pdf_id,
-        "s3url": s3_url,
-        "s3path": f"{S3_BUCKET_NAME}/{user_id}",
-        "vectorid": f"pdf-vectors-{user_id}"
+            "userid": user_id,
+            "name": pdf_id,
+            "s3url": s3_url,
+            "s3path": f"{S3_BUCKET_NAME}/{user_id}",
+            "vectorid": f"pdf-vectors-{user_id}"
         }
         headers = {
-        'accept': 'application/json',
-        'Authorization': f'Bearer {BEARER_TOKEN}',
-        'Content-Type': 'application/json'
+            'accept': 'application/json',
+            'Authorization': f'Bearer {BEARER_TOKEN}',
+            'Content-Type': 'application/json'
         }
 
         response = create_doc_info(payload, headers)
@@ -171,11 +222,11 @@ async def upload_pdf(
         return JSONResponse(
             content={
                 "pdf_id": pdf_id,
-                "file_name": file.filename, 
                 "user_id": user_id,
                 "chunks_stored": len(chunks), 
                 "s3_url": s3_url,
                 "response": response,
+                "was_overwrite": is_overwrite and (file_exists_s3 or file_exists_pinecone),
                 "status_code": "200"
             }
         )
