@@ -2,7 +2,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import List, Literal
+from typing import List, Literal, Dict
 import openai
 from app.service.openai_client import get_embeddings
 from app.service.pinecone_client import query_vectors
@@ -37,53 +37,140 @@ async def get_relevant_chunks(question: str, max_chunks: int, user_id: str) -> L
         logger.error(f"Chunk retrieval failed | user_id={user_id}, error_type={type(e).__name__}, error={str(e)}")
         raise
 
-async def generate_answer(question: str, context_chunks: List[dict], model: str) -> str:
+async def generate_answer(question: str, context_chunks: List[dict], model: str) -> Dict:
     try:
         logger.info(f"Generating answer | model={model}, context_chunks={len(context_chunks)}")
-        context = "\n\n".join([chunk["text"] for chunk in context_chunks])
-        prompt = f"""Based on the following context, answer the question. 
-        If the answer cannot be found in the context, say "I cannot find an answer to this question in the provided documents."
         
-        Context:
-        {context}
+        # Format context with source information
+        formatted_contexts = []
+        chunk_map = {}  # Map to track which chunks belong to which sources
+        for i, chunk in enumerate(context_chunks):
+            formatted_contexts.append(f"""
+Content [{i+1}]: {chunk["text"]}
+Source PDF: {chunk["filename"]} (ID: {chunk["pdf_id"]})
+---""")
+            chunk_map[i+1] = {"filename": chunk["filename"], "pdf_id": chunk["pdf_id"]}
         
-        Question: {question}
+        context = "\n".join(formatted_contexts)
         
-        Answer:"""
-        
+        system_prompt = """You are a helpful assistant that answers questions based on provided context.
+Your answers should be based solely on the provided context. If the answer cannot be found in the context,
+say "I cannot find an answer to this question in the provided documents."
+
+IMPORTANT: 
+1. Do not include source information or citations in your answer text. 
+2. After formulating your answer, you must specify which Content blocks ([1], [2], etc.) you used to form your answer.
+3. List this information in a separate JSON structure after your answer, like this:
+   {"used_content_blocks": [1, 3]} (if you used content from blocks 1 and 3)
+4. Keep your answer and the JSON structure separate with three hyphens (---)
+5. If you cannot find the answer, do not include any content blocks in your response.
+"""
+
+        user_prompt = f"""Context Information:
+{context}
+
+Question: {question}
+
+Remember: 
+1. Provide your answer without any source citations
+2. After your answer, add three hyphens (---)
+3. Then add a JSON object specifying which Content blocks you used
+4. If you cannot find the answer, do not include any content blocks
+
+Example format:
+Your answer here
+---
+{{"used_content_blocks": [1, 2]}}
+
+Answer:"""
+
         response = await openai.ChatCompletion.acreate(
             model=model,
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that answers questions based on provided context."},
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
             ],
             temperature=0.7,
-            max_tokens=500
+            max_tokens=800
         )
         
-        answer = response.choices[0].message.content
-        logger.info(f"Answer generation successful | model={model}, answer_length={len(answer)}")
-        return answer
+        # Split response into answer and used blocks
+        full_response = response.choices[0].message.content.strip()
+        parts = full_response.split('---')
+        
+        answer = parts[0].strip()
+        
+        # Check if the answer indicates no information was found
+        if "I cannot find an answer to this question in the provided documents" in answer:
+            logger.info("No answer found in provided documents")
+            return {
+                "answer": answer,
+                "sources": []
+            }
+        
+        # Extract used content blocks
+        used_blocks = []
+        if len(parts) > 1:
+            try:
+                import json
+                blocks_info = json.loads(parts[1].strip())
+                used_blocks = blocks_info.get('used_content_blocks', [])
+            except:
+                # If parsing fails, assume all chunks were used
+                used_blocks = list(range(1, len(context_chunks) + 1))
+        else:
+            # If no blocks specified, assume all chunks were used
+            used_blocks = list(range(1, len(context_chunks) + 1))
+            
+        # Get unique sources from only the used blocks
+        used_sources = {(chunk_map[block]["filename"], chunk_map[block]["pdf_id"]) 
+                       for block in used_blocks if block in chunk_map}
+        
+        # Create source PDF list from used sources only
+        sources = [{"filename": filename, "pdf_id": pdf_id} 
+                  for filename, pdf_id in used_sources]
+        
+        logger.info(f"Answer generation successful | model={model}, answer_length={len(answer)}, source_count={len(sources)}")
+        return {
+            "answer": answer,
+            "sources": sources
+        }
     except Exception as e:
         logger.error(f"Answer generation failed | model={model}, error_type={type(e).__name__}, error={str(e)}")
         raise
 
+
 async def generate_question_suggestions(context_chunks: List[dict], n_suggestions: int, model: str) -> List[str]:
     try:
         logger.info(f"Generating question suggestions | model={model}, n_suggestions={n_suggestions}")
-        context = "\n\n".join([chunk["text"] for chunk in context_chunks])
-        prompt = f"""Based on the following text, generate exactly {n_suggestions} relevant questions that can be answered using this content.
-        Format: Number each question (1., 2., etc.)
+        
+        # Format context with source information
+        formatted_contexts = []
+        for chunk in context_chunks:
+            formatted_contexts.append(f"""
+Content: {chunk["text"]}
+Source: {chunk["filename"]} (ID: {chunk["pdf_id"]})
+---""")
+        
+        context = "\n".join(formatted_contexts)
+        
+        prompt = f"""Based on the following text from various documents, generate exactly {n_suggestions} relevant questions that can be answered using this content.
         
         Text:
         {context}
+        
+        Requirements:
+        1. Generate exactly {n_suggestions} questions
+        2. Each question should be answerable using the provided content
+        3. Format each question on a new line starting with a number (1., 2., etc.)
+        4. Questions should be diverse and cover different aspects of the content
         
         Generate {n_suggestions} questions:"""
         
         response = await openai.ChatCompletion.acreate(
             model=model,
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that generates relevant questions based on provided content."},
+                {"role": "system", "content": "You are a helpful assistant that generates relevant and insightful questions based on provided content."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.8,
@@ -101,6 +188,7 @@ async def generate_question_suggestions(context_chunks: List[dict], n_suggestion
     except Exception as e:
         logger.error(f"Question suggestion generation failed | model={model}, error_type={type(e).__name__}, error={str(e)}")
         raise
+
 
 @router.post("/{user_id}/ask")
 async def ask_question(
@@ -138,12 +226,13 @@ async def ask_question(
             return JSONResponse(content={
                 "user_id": user_id,
                 "answer": "No relevant information found in your documents.",
+                "sources": [],
                 "suggested_questions": [],
                 "model_used": question_request.model,
                 "status_code": "200"
             })
         
-        answer = await generate_answer(
+        result = await generate_answer(
             question_request.question, 
             relevant_chunks, 
             question_request.model
@@ -158,14 +247,16 @@ async def ask_question(
         logger.info(
             f"Question processing successful | "
             f"user_id={user_id}, "
-            f"answer_length={len(answer)}, "
+            f"answer_length={len(result['answer'])}, "
+            f"sources_count={len(result['sources'])}, "
             f"suggestions_count={len(suggested_questions)}"
         )
         
         return JSONResponse(content={
             "user_id": user_id,
             "question": question_request.question,
-            "answer": answer,
+            "answer": result["answer"],
+            "sources": result["sources"],
             "suggested_questions": suggested_questions,
             "model_used": question_request.model,
             "status_code": "200"
