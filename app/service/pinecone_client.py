@@ -1,4 +1,4 @@
-import os
+import os 
 from pinecone import Pinecone, ServerlessSpec
 from app.get_secret_key import get_secret
 from app.service.log_client import logger
@@ -10,7 +10,7 @@ DIMENSION = 1536
 pc = Pinecone(api_key=PINECONE_API_KEY)
 
 def get_index_name(user_id: str) -> str:
-    return f"pdf-vectors-{user_id}"
+    return f"document-vectors-{user_id}"  # Changed from pdf-vectors
 
 def initialize_pinecone(user_id: str):
     try:
