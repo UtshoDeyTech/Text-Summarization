@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Form
 from fastapi.responses import JSONResponse
 from botocore.exceptions import ClientError
 from app.service.s3_storage import (
@@ -21,7 +21,8 @@ SUPPORTED_EXTENSIONS = {
 async def delete_document(
     request: Request,
     user_id: str,
-    document_id: str
+    document_id: str, 
+    BEARER_TOKEN: str
 ):
     try:
         logger.info(f"Starting document deletion | user_id={user_id}, document_id={document_id}")

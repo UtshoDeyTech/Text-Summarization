@@ -14,7 +14,7 @@ openai.api_key = get_secret("OPENAI_API_KEY")
 
 class QuestionRequest(BaseModel):
     question: str
-    max_chunks: int = 10  # Increased default chunks
+    max_chunks: int = 10
     model: Literal["gpt-3.5-turbo", "gpt-4", "gpt-4o"] = "gpt-4o"
     num_suggestions: int = 5
 
@@ -35,6 +35,22 @@ async def get_relevant_chunks(question: str, max_chunks: int, user_id: str) -> L
         return chunks
     except Exception as e:
         logger.error(f"Chunk retrieval failed | user_id={user_id}, error={str(e)}")
+        raise
+
+async def direct_openai_query(question: str, model: str) -> str:
+    try:
+        response = await openai.ChatCompletion.acreate(
+            model=model,
+            messages=[
+                {"role": "system", "content": "Provide concise answers (max 200 words). If you don't know, say 'I don't know'."},
+                {"role": "user", "content": question}
+            ],
+            temperature=0.7,
+            max_tokens=300
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.error(f"Direct OpenAI query failed | error={str(e)}")
         raise
 
 async def generate_answer(question: str, context_chunks: List[dict], model: str) -> Dict:
@@ -117,12 +133,12 @@ async def process_chunks_in_batches(chunks: List[dict], question: str, model: st
                 all_sources.extend(result["sources"])
         
         if not all_answers:
+            direct_answer = await direct_openai_query(question, model)
             return {
-                "answer": "I cannot find an answer to this question in the provided documents.",
+                "answer": direct_answer if "I don't know" not in direct_answer else "I cannot find an answer to this question.",
                 "sources": []
             }
         
-        # Combine all answers
         combine_prompt = f"""Combine these answers into a single coherent response:
 
 Answers:
@@ -146,7 +162,6 @@ Requirements:
         
         final_answer = response.choices[0].message.content.strip()
         
-        # Remove duplicate sources
         unique_sources = []
         seen = set()
         for source in all_sources:
@@ -165,30 +180,30 @@ Requirements:
 
 async def generate_question_suggestions(context_chunks: List[dict], n_suggestions: int, model: str, original_question: str) -> List[str]:
     try:
+        if not context_chunks:
+            return []
+            
         formatted_contexts = [
             f"""Content: {chunk["text"]}
-Source: {chunk["filename"]} (ID: {chunk["document_id"]}, Type: {chunk["file_type"]})
----""" for chunk in context_chunks[:5]  # Use first 5 chunks for suggestions
+Source: {chunk["filename"]}
+---""" for chunk in context_chunks[:5]
         ]
         
         context = "\n".join(formatted_contexts)
-        prompt = f"""Based on the provided content, generate {n_suggestions} diverse questions that can be answered using this information.
+        prompt = f"""Based on ONLY the provided content, generate {n_suggestions} questions.
 
-Original Question: {original_question}
-
-Text:
+Content:
 {context}
 
-Requirements:
-1. Generate questions that explore different aspects than the original question
-2. Questions should be meaningfully different from each other and the original question
-3. Each question should be answerable using the content
-4. Focus on aspects not covered by the original question"""
+Rules:
+1. Questions must be answerable using ONLY the provided content
+2. Questions should be different from: "{original_question}"
+3. Format as numbered list (e.g. 1., 2., etc)"""
         
         response = await openai.ChatCompletion.acreate(
             model=model,
             messages=[
-                {"role": "system", "content": "Generate diverse follow-up questions that explore different aspects than the original question."},
+                {"role": "system", "content": "Generate questions answerable only from the provided content."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.8,
@@ -224,28 +239,28 @@ async def ask_question(request: Request, user_id: str, question_request: Questio
             user_id
         )
         
-        if not relevant_chunks:
-            return JSONResponse(content={
-                "user_id": user_id,
-                "answer": "No relevant information found in your documents.",
-                "sources": [],
-                "suggested_questions": [],
-                "model_used": question_request.model,
-                "status_code": "200"
-            })
-        
-        result = await process_chunks_in_batches(
-            relevant_chunks,
-            question_request.question,
-            question_request.model
-        )
-        
-        suggested_questions = await generate_question_suggestions(
-            relevant_chunks,
-            question_request.num_suggestions,
-            question_request.model,
-            question_request.question
-        )
+        suggested_questions = []
+        if relevant_chunks:
+            result = await process_chunks_in_batches(
+                relevant_chunks,
+                question_request.question,
+                question_request.model
+            )
+            suggested_questions = await generate_question_suggestions(
+                relevant_chunks,
+                question_request.num_suggestions,
+                question_request.model,
+                question_request.question
+            )
+        else:
+            direct_answer = await direct_openai_query(
+                question_request.question,
+                question_request.model
+            )
+            result = {
+                "answer": direct_answer if "I don't know" not in direct_answer else "No relevant information found.",
+                "sources": []
+            }
         
         return JSONResponse(content={
             "user_id": user_id,
