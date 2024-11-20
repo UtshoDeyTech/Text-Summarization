@@ -1,5 +1,6 @@
 import os 
 from pinecone import Pinecone, ServerlessSpec
+from datetime import datetime
 from app.get_secret_key import get_secret
 from app.service.log_client import logger
 
@@ -10,7 +11,7 @@ DIMENSION = 1536
 pc = Pinecone(api_key=PINECONE_API_KEY)
 
 def get_index_name(user_id: str) -> str:
-    return f"document-vectors-{user_id}"  # Changed from pdf-vectors
+    return f"document-vectors-{user_id}"
 
 def initialize_pinecone(user_id: str):
     try:
@@ -38,6 +39,12 @@ def initialize_pinecone(user_id: str):
 def upsert_vectors(user_id: str, vectors, metadatas, ids):
     try:
         logger.info(f"Upserting vectors | user_id={user_id}, vector_count={len(vectors)}")
+        
+        # Ensure upload_date exists in metadata
+        for metadata in metadatas:
+            if 'upload_date' not in metadata:
+                metadata['upload_date'] = datetime.utcnow().isoformat()
+                
         index = initialize_pinecone(user_id)
         index.upsert(vectors=list(zip(ids, vectors, metadatas)))
         logger.info(f"Vector upsert successful | user_id={user_id}, vector_count={len(vectors)}")

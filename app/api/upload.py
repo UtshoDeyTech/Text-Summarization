@@ -1,5 +1,6 @@
 import uuid
 import logging
+from datetime import datetime
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
 from PyPDF2 import PdfReader
@@ -108,7 +109,6 @@ async def upload_document(
                 }
             )
 
-        # Check if same exact file exists
         try:
             s3_client.head_object(Bucket=S3_BUCKET_NAME, Key=object_name)
             file_exists_s3 = True
@@ -130,7 +130,6 @@ async def upload_document(
                 }
             )
 
-        # Only delete if same exact file exists and overwrite is enabled
         if (file_exists_s3 or file_exists_pinecone) and is_overwrite:
             if file_exists_s3:
                 delete_object(S3_BUCKET_NAME, object_name)
@@ -167,7 +166,8 @@ async def upload_document(
             "text": chunk,
             "s3_url": s3_url,
             "filename": file.filename,
-            "file_type": file_extension
+            "file_type": file_extension,
+            "upload_date": datetime.utcnow().isoformat()
         } for chunk in chunks]
 
         upsert_vectors(user_id, embeddings, metadatas, ids)
