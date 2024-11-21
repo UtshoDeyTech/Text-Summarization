@@ -22,8 +22,7 @@ def get_object_creation_date(bucket: str, key: str) -> str:
 
 @router.get("/{user_id}/list_documents")
 async def list_documents(request: Request, 
-                         user_id: str, 
-                         BEARER_TOKEN: str):
+                         user_id: str):
     try:
         logger.info(f"Starting document listing | user_id={user_id}")
         
