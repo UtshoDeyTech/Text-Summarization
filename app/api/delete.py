@@ -21,8 +21,7 @@ SUPPORTED_EXTENSIONS = {
 async def delete_document(
     request: Request,
     user_id: str,
-    document_id: str, 
-    BEARER_TOKEN: str
+    document_id: str
 ):
     try:
         logger.info(f"Starting document deletion | user_id={user_id}, document_id={document_id}")
