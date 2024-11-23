@@ -168,7 +168,7 @@ END_CONTENT_{i}"""
         system_prompt = """You are a helpful AI assistant answering questions based on the provided context.
 Follow these rules:
 1. Base your answer ONLY on the provided content blocks marked with [CONTENT_X]
-2. If the answer isn't in the context, say "I cannot find the relevant information in the provided documents"
+2. If the answer isn't in the context, say "I cannot find the relevant information in the provided documents."
 3. Be clear, concise, and accurate
 4. After your answer, you must specify which content blocks you used in this format:
    <SOURCES_USED>
