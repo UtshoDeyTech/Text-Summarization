@@ -46,8 +46,12 @@ spec:
               value: "SEQ_URL_PLACEHOLDER"
             - name: SEQ_API_KEY
               value: "SEQ_API_KEY_PLACEHOLDER"
-            # - name: ASP_BACKEND_URL
-            #   value: "ASP_BACKEND_URL_PLACEHOLDER"
+            - name: PINECONE_CLIENT_INDEX
+              value: "PINECONE_CLIENT_INDEX_PLACEHOLDER"
+            - name: PINECONE_ANC_INDEX
+              value: "PINECONE_ANC_INDEX_PLACEHOLDER"
+            - name: PINECONE_GLOBAL_INDEX
+              value: "PINECONE_GLOBAL_INDEX_PLACEHOLDER"
 
 ---
 apiVersion: v1
