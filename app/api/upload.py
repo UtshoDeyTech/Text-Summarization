@@ -1,5 +1,6 @@
 import uuid
 import logging
+from datetime import datetime
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
 from PyPDF2 import PdfReader
@@ -17,7 +18,8 @@ from app.service.openai_client import get_embeddings
 from app.service.pinecone_client import (
     upsert_vectors,
     list_all_vectors,
-    delete_vectors
+    delete_vectors,
+    find_document_namespace
 )
 from app.service.log_client import logger
 import requests
@@ -108,15 +110,16 @@ async def upload_document(
                 }
             )
 
-        # Check if same exact file exists
+        # Check if file exists in S3
         try:
             s3_client.head_object(Bucket=S3_BUCKET_NAME, Key=object_name)
             file_exists_s3 = True
         except ClientError:
             file_exists_s3 = False
 
-        all_vectors = list_all_vectors(user_id)
-        file_exists_pinecone = any(v.metadata.get('document_id') == document_id for v in all_vectors)
+        # Check if file exists in Pinecone
+        namespace = find_document_namespace(user_id, document_id)
+        file_exists_pinecone = namespace is not None
 
         if (file_exists_s3 or file_exists_pinecone) and not is_overwrite:
             return JSONResponse(
@@ -130,14 +133,16 @@ async def upload_document(
                 }
             )
 
-        # Only delete if same exact file exists and overwrite is enabled
+        # Delete existing file if overwriting
         if (file_exists_s3 or file_exists_pinecone) and is_overwrite:
             if file_exists_s3:
                 delete_object(S3_BUCKET_NAME, object_name)
+                logger.info(f"Deleted existing file from S3 | object={object_name}")
             if file_exists_pinecone:
-                ids_to_delete = [v.id for v in all_vectors if v.metadata.get('document_id') == document_id]
-                delete_vectors(user_id, ids_to_delete)
+                delete_vectors(user_id, document_id)
+                logger.info(f"Deleted existing vectors from Pinecone | document_id={document_id}")
 
+        # Upload to S3
         file_content = await file.read()
         s3_url = upload_file(BytesIO(file_content), S3_BUCKET_NAME, object_name)
         if not s3_url:
@@ -149,6 +154,7 @@ async def upload_document(
                 }
             )
 
+        # Process document and create chunks
         chunks = process_document(BytesIO(file_content), file_extension)
         if len(chunks) == 0:
             raise HTTPException(
@@ -159,19 +165,27 @@ async def upload_document(
                 }
             )
 
+        # Create embeddings and metadata
         embeddings = get_embeddings(chunks)
         ids = [f"{document_id}_{i}" for i in range(len(chunks))]
-        metadatas = [{
-            "document_id": document_id,
-            "user_id": user_id,
-            "text": chunk,
-            "s3_url": s3_url,
-            "filename": file.filename,
-            "file_type": file_extension
-        } for chunk in chunks]
+        metadatas = [
+            {
+                "document_id": document_id,
+                "user_id": user_id,
+                "filename": file.filename,
+                "file_type": file_extension,
+                "docs_category": "",
+                "org_id": "",
+                "upload_date": datetime.utcnow().isoformat(),
+                "text": chunk
+            } 
+            for chunk in chunks
+        ]
 
-        upsert_vectors(user_id, embeddings, metadatas, ids)
+        # Upload vectors to Pinecone
+        upsert_vectors(user_id, embeddings, metadatas, ids, file.filename)
 
+        # Create document info
         payload = {
             "userid": user_id,
             "name": document_id,

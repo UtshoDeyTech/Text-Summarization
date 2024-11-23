@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import upload, delete, list, search, sync, qa, diagnostics
+from app.api import upload, delete, list, sync, qa, diagnostics
 from app.service.log_client import logger, log_api_request, log_error
 from time import time
 
@@ -44,7 +44,6 @@ app.add_middleware(
 app.include_router(upload.router)
 app.include_router(delete.router)
 app.include_router(list.router)
-app.include_router(search.router)
 app.include_router(sync.router)
 app.include_router(qa.router)
 app.include_router(diagnostics.router)
