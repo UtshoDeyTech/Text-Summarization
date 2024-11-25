@@ -37,7 +37,7 @@ SUPPORTED_EXTENSIONS = {
 }
 
 def create_doc_info(payload, headers):
-    url = "https://asp-api-dev.askken.io/api/docinfo/createdocinfo"
+    url = os.environ["AI_VALUE_ASP"]+"/api/docinfo/createdocinfo"
     try:
         response = requests.post(url, json=payload, headers=headers)
         response_data = response.json()
