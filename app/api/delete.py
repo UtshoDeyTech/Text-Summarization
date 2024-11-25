@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, HTTPException, Request, Form
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from botocore.exceptions import ClientError
 from app.service.s3_storage import (
@@ -7,7 +7,7 @@ from app.service.s3_storage import (
     s3_client,
     S3_BUCKET_NAME
 )
-from app.service.pinecone_client import list_all_vectors, delete_vectors
+from app.service.pinecone_client import delete_vectors
 from app.service.log_client import logger
 
 router = APIRouter()
@@ -43,38 +43,30 @@ async def delete_document(
         object_name = f"{user_id}/{document_id}"
         logger.info(f"Checking S3 path: {object_name}")
         
-        # Check S3 existence
+        # Check S3 existence and delete if exists
+        s3_deleted = False
         try:
             s3_client.head_object(Bucket=S3_BUCKET_NAME, Key=object_name)
-            file_exists_in_s3 = True
-        except ClientError:
-            file_exists_in_s3 = False
+            delete_object(S3_BUCKET_NAME, object_name)
+            s3_deleted = True
+            logger.info(f"Successfully deleted from S3 | object_name={object_name}")
+        except ClientError as e:
+            logger.warning(f"File not found in S3 or deletion failed | object_name={object_name}, error={str(e)}")
+            s3_deleted = False
         
-        # Delete from S3 if exists
-        s3_deleted = False
-        if file_exists_in_s3:
-            try:
-                delete_object(S3_BUCKET_NAME, object_name)
-                s3_deleted = True
-            except Exception as e:
-                logger.error(f"S3 deletion failed | error={str(e)}")
-        
-        # Delete vectors
-        all_vectors = list_all_vectors(user_id)
-        ids_to_delete = [
-            v.id for v in all_vectors 
-            if v.metadata.get('document_id') == document_id
-        ]
-        
-        vectors_deleted = 0
-        if ids_to_delete:
-            try:
-                delete_vectors(user_id, ids_to_delete)
-                vectors_deleted = len(ids_to_delete)
-            except Exception as e:
-                logger.error(f"Vector deletion failed | error={str(e)}")
+        # Delete vectors from Pinecone
+        vectors_deleted = False
+        try:
+            vectors_deleted = delete_vectors(user_id, document_id)
+            if vectors_deleted:
+                logger.info(f"Successfully deleted vectors from Pinecone | document_id={document_id}")
+            else:
+                logger.warning(f"No vectors found to delete in Pinecone | document_id={document_id}")
+        except Exception as e:
+            logger.error(f"Vector deletion failed | document_id={document_id}, error={str(e)}")
 
-        if not s3_deleted and vectors_deleted == 0:
+        # If neither S3 nor Pinecone had the document
+        if not s3_deleted and not vectors_deleted:
             raise HTTPException(
                 status_code=404,
                 detail={
