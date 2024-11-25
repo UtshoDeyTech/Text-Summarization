@@ -85,7 +85,7 @@ stages:
               sed -i 's|PINECONE_CLIENT_INDEX_PLACEHOLDER|$(PINECONE_CLIENT_INDEX)|g' ./deployments/deployment-dev.yml
               sed -i 's|PINECONE_ANC_INDEX_PLACEHOLDER|$(PINECONE_ANC_INDEX)|g' ./deployments/deployment-dev.yml
               sed -i 's|PINECONE_GLOBAL_INDEX_PLACEHOLDER|$(PINECONE_GLOBAL_INDEX)|g' ./deployments/deployment-dev.yml
-              sed -i 's|AI_VALUE_PLACEHOLDER|$(AI_VALUE)|g' ./deployments/deployment-dev.yml
+              sed -i 's|AI_VALUE_ASP_PLACEHOLDER|$(AI_VALUE_ASP)|g' ./deployments/deployment-dev.yml
               sed -i 's|ASP_BACKEND_URL_PLACEHOLDER|$(ASP_BACKEND_URL)|g' ./deployments/deployment-dev.yml
               kubectl apply -f ./deployments/deployment-dev.yml
             displayName: "Deploy to ASKKEN PYTHON API Development"
@@ -163,7 +163,7 @@ stages:
               sed -i 's|PINECONE_CLIENT_INDEX_PLACEHOLDER|$(PINECONE_CLIENT_INDEX)|g' ./deployments/deployment-prod.yml
               sed -i 's|PINECONE_ANC_INDEX_PLACEHOLDER|$(PINECONE_ANC_INDEX)|g' ./deployments/deployment-prod.yml
               sed -i 's|PINECONE_GLOBAL_INDEX_PLACEHOLDER|$(PINECONE_GLOBAL_INDEX)|g' ./deployments/deployment-prod.yml
-              sed -i 's|AI_VALUE_PLACEHOLDER|$(AI_VALUE)|g' ./deployments/deployment-prod.yml        
+              sed -i 's|AI_VALUE_ASP_PLACEHOLDER|$(AI_VALUE_ASP)|g' ./deployments/deployment-prod.yml        
               sed -i 's|ASP_BACKEND_URL_PLACEHOLDER|$(ASP_BACKEND_URL)|g' ./deployments/deployment-prod.yml        
               kubectl apply -f ./deployments/deployment-prod.yml
             displayName: "Deploy to ASKKEN PYTHON API Production"
