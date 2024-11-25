@@ -7,6 +7,11 @@ from app.service.openai_client import get_embeddings
 from app.service.log_client import logger
 from app.get_secret_key import get_secret
 from pinecone import Pinecone
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 router = APIRouter()
 openai.api_key = get_secret("OPENAI_API_KEY")
