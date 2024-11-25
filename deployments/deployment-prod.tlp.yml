@@ -52,8 +52,10 @@ spec:
               value: "PINECONE_ANC_INDEX_PLACEHOLDER"
             - name: PINECONE_GLOBAL_INDEX
               value: "PINECONE_GLOBAL_INDEX_PLACEHOLDER"
-            - name: AI_BACKEND_URL
-              value: AI_BACKEND_URL_PLACEHOLDER
+            - name: AI_VALUE
+              value: AI_VALUE_PLACEHOLDER
+            - name: ASP_BACKEND_URL
+              value: ASP_BACKEND_URL_PLACEHOLDER         
 ---
 apiVersion: v1
 kind: Service
