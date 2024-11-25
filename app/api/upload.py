@@ -23,10 +23,7 @@ from app.service.pinecone_client import (
 )
 from app.service.log_client import logger
 import requests
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
+from config import AI_VALUE_ASP
 
 router = APIRouter()
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
@@ -37,7 +34,7 @@ SUPPORTED_EXTENSIONS = {
 }
 
 def create_doc_info(payload, headers):
-    url = os.environ["AI_VALUE_ASP"]+"/api/docinfo/createdocinfo"
+    url = AI_VALUE_ASP+"/api/docinfo/createdocinfo"
     try:
         response = requests.post(url, json=payload, headers=headers)
         response_data = response.json()
