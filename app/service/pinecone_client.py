@@ -1,18 +1,11 @@
-import os 
 from pinecone import Pinecone, ServerlessSpec
 from datetime import datetime
-from app.get_secret_key import get_secret
 from app.service.log_client import logger
 import uuid
-from dotenv import load_dotenv
+from config import PINECONE_API_KEY, PINECONE_CLIENT_INDEX
 
-load_dotenv()
-
-
-PINECONE_API_KEY = get_secret("PINECONE_API_KEY")
-PINECONE_ENVIRONMENT = get_secret("PINECONE_ENVIRONMENT")
 DIMENSION = 1536
-PINECONE_CLIENT_INDEX = "client-document"
+
 
 pc = Pinecone(api_key=PINECONE_API_KEY)
 

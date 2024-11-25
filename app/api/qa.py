@@ -5,7 +5,7 @@ from typing import List, Optional, Literal
 import openai
 from app.service.openai_client import get_embeddings
 from app.service.log_client import logger
-from app.get_secret_key import get_secret
+from config import PINECONE_CLIENT_INDEX, OPENAI_API_KEY, PINECONE_API_KEY
 from pinecone import Pinecone
 import os
 from dotenv import load_dotenv
@@ -14,7 +14,7 @@ load_dotenv()
 
 
 router = APIRouter()
-openai.api_key = get_secret("OPENAI_API_KEY")
+openai.api_key = OPENAI_API_KEY
 
 class QuestionRequest(BaseModel):
     question: str
@@ -85,8 +85,8 @@ Rules:
 def get_user_namespaces(user_id: str) -> List[str]:
     """Get all namespaces for a specific user."""
     try:
-        pc = Pinecone(api_key=get_secret("PINECONE_API_KEY"))
-        index = pc.Index("client-document")
+        pc = Pinecone(api_key=PINECONE_API_KEY)
+        index = pc.Index(PINECONE_CLIENT_INDEX) 
         
         stats = index.describe_index_stats()
         user_namespaces = [ns for ns in stats.namespaces.keys() if ns.startswith(f"{user_id}_")]
@@ -110,8 +110,8 @@ async def get_context_from_vectors(question: str, user_id: str, max_chunks: int 
             return []
 
         # Initialize Pinecone client
-        pc = Pinecone(api_key=get_secret("PINECONE_API_KEY"))
-        index = pc.Index("client-document")
+        pc = Pinecone(api_key=PINECONE_API_KEY)
+        index = pc.Index(PINECONE_CLIENT_INDEX) 
         
         # Query each namespace and collect results
         all_matches = []
