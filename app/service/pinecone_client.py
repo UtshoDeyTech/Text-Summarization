@@ -1,14 +1,11 @@
-import os 
 from pinecone import Pinecone, ServerlessSpec
 from datetime import datetime
-from app.get_secret_key import get_secret
 from app.service.log_client import logger
 import uuid
+from config import PINECONE_API_KEY, PINECONE_CLIENT_INDEX
 
-PINECONE_API_KEY = get_secret("PINECONE_API_KEY")
-PINECONE_ENVIRONMENT = get_secret("PINECONE_ENVIRONMENT")
 DIMENSION = 1536
-INDEX_NAME = "client-document"
+
 
 pc = Pinecone(api_key=PINECONE_API_KEY)
 
@@ -17,11 +14,11 @@ def initialize_pinecone():
     try:
         existing_indexes = pc.list_indexes().names()
         
-        logger.info(f"Initializing Pinecone | index_name={INDEX_NAME}")
-        if INDEX_NAME not in existing_indexes:
-            logger.info(f"Creating new Pinecone index | index_name={INDEX_NAME}, dimension={DIMENSION}")
+        logger.info(f"Initializing Pinecone | index_name={PINECONE_CLIENT_INDEX}")
+        if PINECONE_CLIENT_INDEX not in existing_indexes:
+            logger.info(f"Creating new Pinecone index | index_name={PINECONE_CLIENT_INDEX}, dimension={DIMENSION}")
             pc.create_index(
-                name=INDEX_NAME,
+                name=PINECONE_CLIENT_INDEX,
                 dimension=DIMENSION,
                 metric="cosine",
                 spec=ServerlessSpec(
@@ -29,7 +26,7 @@ def initialize_pinecone():
                     region="us-west-2"
                 )
             )
-        return pc.Index(INDEX_NAME)
+        return pc.Index(PINECONE_CLIENT_INDEX)
     except Exception as e:
         logger.error(f"Pinecone initialization failed | error_type={type(e).__name__}, error={str(e)}")
         raise

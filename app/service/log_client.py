@@ -2,9 +2,7 @@ import logging
 import os
 import seqlog
 from datetime import datetime
-from dotenv import load_dotenv
-
-load_dotenv()
+from config import SEQ_URL, SEQ_API_KEY
 
 class FolderNameFilter(logging.Filter):
     def filter(self, record):
@@ -26,10 +24,6 @@ def setup_logger():
     
     # Set base logging level
     logger.setLevel(logging.INFO)
-
-    # Configure Seq logging
-    SEQ_URL = os.getenv("SEQ_URL")
-    SEQ_API_KEY = os.getenv("SEQ_API_KEY")
 
     print(f"Debug - SEQ_URL: {SEQ_URL}")  # Debug print
     print(f"Debug - SEQ_API_KEY exists: {bool(SEQ_API_KEY)}")  # Debug print

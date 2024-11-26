@@ -2,15 +2,9 @@ import os
 import logging
 import boto3
 from botocore.exceptions import ClientError
-from app.get_secret_key import get_secret
 from app.service.log_client import logger
+from config import S3_REGION_NAME, S3_END_POINT_URL, S3_ACCESS_KEY, S3_SECRET_KEY, S3_BUCKET_NAME
 
-# Get S3 configuration
-S3_REGION_NAME = get_secret("S3_REGION_NAME")
-S3_END_POINT_URL = get_secret("S3_END_POINT_URL")
-S3_ACCESS_KEY = get_secret("S3_ACCESS_KEY")
-S3_SECRET_KEY = get_secret("S3_SECRET_KEY")
-S3_BUCKET_NAME = get_secret("S3_BUCKET_NAME")
 
 logger.info(f"Initializing S3 client | endpoint={S3_END_POINT_URL}, region={S3_REGION_NAME}")
 
