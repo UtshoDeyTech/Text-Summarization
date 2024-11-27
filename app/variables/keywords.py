@@ -1,4 +1,4 @@
-insurance_keywords = [
+keywords = [
     # Core Insurance Terms
     "premium", "fee", "claim", "deductible", "coverage", "policy", "renewal", 
     "liability", "medical", "property", "collision", "comprehensive", "umbrella", 
