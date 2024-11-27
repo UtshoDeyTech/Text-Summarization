@@ -9,12 +9,19 @@ from config import PINECONE_CLIENT_INDEX, OPENAI_API_KEY, PINECONE_API_KEY
 from pinecone import Pinecone
 import os
 from dotenv import load_dotenv
+from app.variables.keywords import keywords
+from nltk import WordNetLemmatizer
+import nltk
 
 load_dotenv()
 
 
 router = APIRouter()
 openai.api_key = OPENAI_API_KEY
+
+nltk.download('wordnet', quiet=True)
+
+lemmatizer = WordNetLemmatizer()
 
 class QuestionRequest(BaseModel):
     question: str
@@ -246,6 +253,18 @@ Follow these rules:
         logger.error(f"Error generating answer | error={str(e)}")
         raise
 
+async def validate_insurance_question(question: str) -> bool:
+    # Convert question to lowercase and split into words
+    question_words = set(lemmatizer.lemmatize(word.lower()) for word in question.split())
+    
+    # Lemmatize keywords
+    lemmatized_keywords = set(lemmatizer.lemmatize(keyword.lower()) for keyword in keywords)
+    
+    # Check if any lemmatized word matches
+    matching_words = question_words.intersection(lemmatized_keywords)
+    
+    return len(matching_words) > 0
+
 @router.post("/{user_id}/ask")
 async def ask_question(user_id: str, request: QuestionRequest) -> QuestionResponse:
     try:
@@ -265,6 +284,21 @@ async def ask_question(user_id: str, request: QuestionRequest) -> QuestionRespon
                 detail={
                     "status_code": "400",
                     "error_messages": ["Number of suggested questions must be between 1 and 10"]
+                }
+            )
+
+        # Validate if question is insurance-related
+        is_insurance_related = await validate_insurance_question(request.question)
+        if not is_insurance_related:
+            return JSONResponse(
+                content={
+                    "user_id": user_id,
+                    "question": request.question,
+                    "answer": "This question is not related to insurance.",
+                    "sources": [],
+                    "suggested_questions": [],
+                    "model_used": request.model,
+                    "status_code": "200"
                 }
             )
 
