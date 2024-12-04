@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from app.variables.keywords import keywords
 from nltk import WordNetLemmatizer
 import nltk
+from datetime import datetime, timezone
 
 load_dotenv()
 
@@ -327,6 +328,7 @@ async def validate_insurance_question(question: str) -> bool:
 
 @router.post("/{user_id}/ask")
 async def ask_question(user_id: str, request: QuestionRequest) -> QuestionResponse:
+    start_time = datetime.now(timezone.utc)
     try:
         if request.max_chunks < 1 or request.max_chunks > 20:
             raise HTTPException(
@@ -360,11 +362,14 @@ async def ask_question(user_id: str, request: QuestionRequest) -> QuestionRespon
         #         }
         #     )
 
+        vector_start_time = datetime.now(timezone.utc)
         contexts = await get_context_from_vectors(
             request.question,
             user_id,
             request.max_chunks
         )
+        vector_duration = (datetime.now(timezone.utc) - vector_start_time).total_seconds()
+        logger.info(f"Vector search completed | user_id={user_id}, duration_seconds={vector_duration}")
 
         result = await generate_answer(
             request.question,
@@ -378,6 +383,9 @@ async def ask_question(user_id: str, request: QuestionRequest) -> QuestionRespon
             request.model,
             request.question
         )
+
+        total_duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+        logger.info(f"Question processing completed | user_id={user_id}, total_duration_seconds={total_duration}")
 
         return JSONResponse(
             content={
