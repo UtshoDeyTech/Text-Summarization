@@ -92,6 +92,7 @@ async def upload_document(
     BEARER_TOKEN: str = Form(...),
     file: UploadFile = File(...)
 ):
+    start_time = datetime.utcnow()
     is_overwrite = True
     try:
         file_extension = file.filename.split('.')[-1].lower()
@@ -161,6 +162,9 @@ async def upload_document(
                     "error_messages": ["No text could be extracted from the document"]
                 }
             )
+        
+        # Upload vectors to Pinecone with timing
+        pinecone_start = datetime.utcnow()
 
         # Create embeddings and metadata
         embeddings = get_embeddings(chunks)
@@ -179,8 +183,10 @@ async def upload_document(
             for chunk in chunks
         ]
 
-        # Upload vectors to Pinecone
+
         upsert_vectors(user_id, embeddings, metadatas, ids, file.filename)
+        pinecone_duration = (datetime.utcnow() - pinecone_start).total_seconds()
+        logger.info(f"Pinecone upload completed | document_id={document_id}, chunks={len(chunks)}, duration_seconds={pinecone_duration}")
 
         # Create document info
         payload = {
@@ -197,6 +203,9 @@ async def upload_document(
         }
 
         response = create_doc_info(payload, headers)
+        
+        total_duration = (datetime.utcnow() - start_time).total_seconds()
+        logger.info(f"Document processing completed | user_id={user_id} | document_id={document_id}, total_duration_seconds={total_duration}")
 
         return JSONResponse(
             content={

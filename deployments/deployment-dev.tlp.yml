@@ -11,6 +11,8 @@ spec:
     metadata:
       labels:
         app: askken-python-dev-api
+      annotations:
+        linkerd.io/inject: enabled
     spec:
       containers:
         - name: askken-python-dev-api
@@ -55,6 +57,10 @@ spec:
               value: AI_VALUE_ASP_PLACEHOLDER
             - name: ASP_BACKEND_URL
               value: ASP_BACKEND_URL_PLACEHOLDER
+            - name: LOG_ENVIROMENT
+              value: LOG_ENVIROMENT_PLACEHOLDER
+            - name: LOG_APP_NAME
+              value: LOG_APP_NAME_PLACEHOLDER
 
 ---
 apiVersion: v1
