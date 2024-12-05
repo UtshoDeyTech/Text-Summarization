@@ -24,21 +24,37 @@ lemmatizer = WordNetLemmatizer()
 class MemoryBuffer:
     def __init__(self, buffer_size=3):
         self.conversation_history = deque(maxlen=buffer_size)
-        
+        self.context_summaries = deque(maxlen=buffer_size)
+
+    async def generate_context_summary(self, contexts: List[dict]) -> str:
+        context_text = "\n".join([f"Content: {ctx['text']}" for ctx in contexts])
+        response = await openai.ChatCompletion.acreate(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "Create a brief 1-2 sentence summary of the key information from these documents."},
+                {"role": "user", "content": context_text}
+            ],
+            temperature=0.7,
+            max_tokens=100
+        )
+        return response.choices[0].message.content
+
+    async def add_interaction(self, question: str, answer: str, contexts: List[dict]):
+        summary = await self.generate_context_summary(contexts)
+        self.conversation_history.append({
+            "question": question,
+            "answer": answer,
+            "context_summary": summary
+        })
+
     def get_context(self):
         messages = []
         for item in self.conversation_history:
             messages.extend([
                 {"role": "user", "content": item["question"]},
-                {"role": "assistant", "content": item["answer"]}
+                {"role": "assistant", "content": f"{item['answer']}\nContext summary: {item['context_summary']}"}
             ])
         return messages
-
-    def add_interaction(self, question: str, answer: str):
-        self.conversation_history.append({
-            "question": question,
-            "answer": answer
-        })
 
 class QuestionRequest(BaseModel):
     question: str
@@ -231,85 +247,85 @@ async def get_context_from_vectors(question: str, user_id: str, max_chunks: int 
         raise
 
 async def generate_answer(question: str, contexts: List[dict], model: str) -> dict:
-    try:
-        if not contexts:
-            return {
-                "answer": "I cannot find any relevant information in the available documents to answer your question.",
-                "sources": []
-            }
+   try:
+       if not contexts:
+           return {
+               "answer": "I cannot find any relevant information in the available documents to answer your question.",
+               "sources": []
+           }
 
-        formatted_contexts = []
-        for i, ctx in enumerate(contexts, 1):
-            source_type = "URL" if ctx['source_type'] == "url" else "DOCUMENT"
-            formatted_contexts.append(
-                f"""[CONTENT_{i}]
+       formatted_contexts = []
+       for i, ctx in enumerate(contexts, 1):
+           source_type = "URL" if ctx['source_type'] == "url" else "DOCUMENT"
+           formatted_contexts.append(
+               f"""[CONTENT_{i}]
 SOURCE_TYPE: {source_type}
 SOURCE: {ctx['filename']}
 TEXT: {ctx['text']}
 END_CONTENT_{i}"""
-            )
-        
-        context_text = "\n\n".join(formatted_contexts)
-        conversation_context = memory_buffer.get_context()
+           )
+       
+       context_text = "\n\n".join(formatted_contexts)
+       conversation_context = memory_buffer.get_context()
 
-        system_prompt = """You are a helpful AI assistant answering questions based on the provided context.
+       system_prompt = """You are a helpful AI assistant answering questions based on the provided context.
 Follow these rules:
 1. Base your answer ONLY on the provided content blocks marked with [CONTENT_X] and previous conversation context
 2. If the answer isn't in the context, say "I cannot find the relevant information in the provided documents."
 3. Be clear, concise, and accurate
 4. After your answer, specify which content blocks you used in this format:
-   <SOURCES_USED>
-   CONTENT_1: [URL] example.com
-   CONTENT_3: [DOCUMENT] filename.pdf
-   </SOURCES_USED>"""
+  <SOURCES_USED>
+  CONTENT_1: [URL] example.com
+  CONTENT_3: [DOCUMENT] filename.pdf
+  </SOURCES_USED>"""
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            *conversation_context,
-            {"role": "user", "content": f"CONTEXT:\n{context_text}\n\nQUESTION: {question}"}
-        ]
+       messages = [
+           {"role": "system", "content": system_prompt},
+           *conversation_context,
+           {"role": "user", "content": f"CONTEXT:\n{context_text}\n\nQUESTION: {question}"}
+       ]
 
-        response = await openai.ChatCompletion.acreate(
-            model=model,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=800
-        )
+       response = await openai.ChatCompletion.acreate(
+           model=model,
+           messages=messages,
+           temperature=0.7,
+           max_tokens=800
+       )
 
-        full_response = response.choices[0].message.content.strip()
-        answer_text = full_response
-        used_sources = []
-        
-        if "<SOURCES_USED>" in full_response:
-            parts = full_response.split("<SOURCES_USED>")
-            answer_text = parts[0].strip()
-            
-            sources_section = parts[1].split("</SOURCES_USED>")[0].strip()
-            source_lines = [line.strip() for line in sources_section.split('\n') if line.strip()]
-            
-            for line in source_lines:
-                if ":" in line:
-                    content_num = line.split(":")[0].strip()
-                    content_index = int(content_num.replace("CONTENT_", "")) - 1
-                    if content_index < len(contexts):
-                        ctx = contexts[content_index]
-                        source = {
-                            "filename": ctx["filename"],
-                            "document_id": ctx["document_id"],
-                            "file_type": ctx["file_type"]
-                        }
-                        if source not in used_sources:
-                            used_sources.append(source)
+       full_response = response.choices[0].message.content.strip()
+       answer_text = full_response
+       used_sources = []
+       
+       if "<SOURCES_USED>" in full_response:
+           parts = full_response.split("<SOURCES_USED>")
+           answer_text = parts[0].strip()
+           
+           sources_section = parts[1].split("</SOURCES_USED>")[0].strip()
+           source_lines = [line.strip() for line in sources_section.split('\n') if line.strip()]
+           
+           for line in source_lines:
+               if ":" in line:
+                   content_num = line.split(":")[0].strip()
+                   content_index = int(content_num.replace("CONTENT_", "")) - 1
+                   if content_index < len(contexts):
+                       ctx = contexts[content_index]
+                       source = {
+                           "filename": ctx["filename"],
+                           "document_id": ctx["document_id"],
+                           "file_type": ctx["file_type"]
+                       }
+                       if source not in used_sources:
+                           used_sources.append(source)
 
-        memory_buffer.add_interaction(question, answer_text)
+       await memory_buffer.add_interaction(question, answer_text, contexts)
 
-        return {
-            "answer": answer_text,
-            "sources": used_sources
-        }
-    except Exception as e:
-        logger.error(f"Error generating answer | error={str(e)}")
-        raise
+       return {
+           "answer": answer_text,
+           "sources": used_sources
+       }
+   except Exception as e:
+       logger.error(f"Error generating answer | error={str(e)}")
+       raise
 
 async def validate_insurance_question(question: str) -> bool:
     question_words = set(lemmatizer.lemmatize(word.lower()) for word in question.split())
@@ -344,11 +360,8 @@ async def ask_question(user_id: str, request: QuestionRequest) -> QuestionRespon
             request.max_chunks
         )
 
-        result = await generate_answer(
-            request.question,
-            contexts,
-            request.model
-        )
+        result = await generate_answer(request.question, contexts, request.model)
+        await memory_buffer.add_interaction(request.question, result["answer"], contexts)
 
         suggested_questions = await generate_question_suggestions(
             contexts,
