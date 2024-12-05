@@ -13,14 +13,32 @@ from app.variables.keywords import keywords
 from nltk import WordNetLemmatizer
 import nltk
 from datetime import datetime, timezone
+from collections import deque
 
 load_dotenv()
-
 router = APIRouter()
 openai.api_key = OPENAI_API_KEY
-
 nltk.download('wordnet', quiet=True)
 lemmatizer = WordNetLemmatizer()
+
+class MemoryBuffer:
+    def __init__(self, buffer_size=3):
+        self.conversation_history = deque(maxlen=buffer_size)
+        
+    def get_context(self):
+        messages = []
+        for item in self.conversation_history:
+            messages.extend([
+                {"role": "user", "content": item["question"]},
+                {"role": "assistant", "content": item["answer"]}
+            ])
+        return messages
+
+    def add_interaction(self, question: str, answer: str):
+        self.conversation_history.append({
+            "question": question,
+            "answer": answer
+        })
 
 class QuestionRequest(BaseModel):
     question: str
@@ -42,6 +60,8 @@ class QuestionResponse(BaseModel):
     model_used: str
     status_code: str
 
+memory_buffer = MemoryBuffer()
+
 async def generate_question_suggestions(context_chunks: List[dict], n_suggestions: int, model: str, original_question: str) -> List[str]:
     try:
         if not context_chunks:
@@ -50,7 +70,7 @@ async def generate_question_suggestions(context_chunks: List[dict], n_suggestion
         formatted_contexts = [
             f"""Content: {chunk["text"]}
 Source: {chunk["filename"]}
----""" for chunk in context_chunks[:5]  # Limit to first 5 chunks for suggestions
+---""" for chunk in context_chunks[:5]
         ]
         
         context = "\n".join(formatted_contexts)
@@ -82,33 +102,26 @@ Rules:
             if line.strip() and any(line.strip().startswith(f"{i}.") for i in range(1, n_suggestions + 1))
         ]
         
-        logger.info(f"Generated suggested questions | count={len(questions)}")
         return questions[:n_suggestions]
     except Exception as e:
         logger.error(f"Question suggestion generation failed | error={str(e)}")
         raise
 
 def get_user_namespaces(user_id: str) -> List[str]:
-    """Get all namespaces for a specific user."""
     try:
         pc = Pinecone(api_key=PINECONE_API_KEY)
         index = pc.Index(PINECONE_CLIENT_INDEX) 
-        
         stats = index.describe_index_stats()
         user_namespaces = [ns for ns in stats.namespaces.keys() if ns.startswith(f"{user_id}_")]
-        
-        logger.info(f"Found namespaces | user_id={user_id}, namespace_count={len(user_namespaces)}")
         return user_namespaces
     except Exception as e:
         logger.error(f"Error getting user namespaces | user_id={user_id}, error={str(e)}")
         raise
 
 async def get_document_contexts(question_embedding: List[float], user_id: str, max_chunks: int) -> List[dict]:
-    """Get context matches from user's personal documents."""
     try:
         user_namespaces = get_user_namespaces(user_id)
         if not user_namespaces:
-            logger.warning(f"No document namespaces found | user_id={user_id}")
             return []
 
         pc = Pinecone(api_key=PINECONE_API_KEY)
@@ -147,18 +160,15 @@ async def get_document_contexts(question_embedding: List[float], user_id: str, m
         raise
 
 async def get_url_contexts(question_embedding: List[float], max_chunks: int) -> List[dict]:
-    """Get context matches from global URL repository."""
     try:
         pc = Pinecone(api_key=PINECONE_API_KEY)
         url_index = pc.Index(PINECONE_ANC_INDEX)
         
-        # Get all URL namespaces
         stats = url_index.describe_index_stats()
         url_namespaces = list(stats.namespaces.keys())
         
         matches = []
         if url_namespaces:
-            # Query each namespace
             for namespace in url_namespaces:
                 try:
                     results = url_index.query(
@@ -172,7 +182,6 @@ async def get_url_contexts(question_embedding: List[float], max_chunks: int) -> 
                     logger.error(f"Error querying URL namespace | namespace={namespace}, error={str(e)}")
                     continue
         else:
-            # If no namespaces, try querying without namespace
             results = url_index.query(
                 vector=question_embedding,
                 top_k=max_chunks,
@@ -180,7 +189,6 @@ async def get_url_contexts(question_embedding: List[float], max_chunks: int) -> 
             )
             matches.extend(results.matches)
         
-        # Sort matches by score
         matches.sort(key=lambda x: x.score, reverse=True)
         top_matches = matches[:max_chunks]
         
@@ -189,8 +197,8 @@ async def get_url_contexts(question_embedding: List[float], max_chunks: int) -> 
             metadata = match.metadata or {}
             context = {
                 "text": metadata.get("text", ""),
-                "filename": metadata.get("url", ""),  # Use URL as filename
-                "document_id": metadata.get("document_id", metadata.get("url", "")),  # Use URL as document_id if not present
+                "filename": metadata.get("url", ""),
+                "document_id": metadata.get("document_id", metadata.get("url", "")),
                 "file_type": "url",
                 "namespace": metadata.get("namespace", ""),
                 "score": match.score,
@@ -200,7 +208,6 @@ async def get_url_contexts(question_embedding: List[float], max_chunks: int) -> 
             if context["text"].strip():
                 contexts.append(context)
         
-        logger.info(f"Retrieved URL contexts | match_count={len(matches)}, context_count={len(contexts)}")
         return contexts
         
     except Exception as e:
@@ -208,7 +215,6 @@ async def get_url_contexts(question_embedding: List[float], max_chunks: int) -> 
         raise
 
 async def get_context_from_vectors(question: str, user_id: str, max_chunks: int = 10) -> List[dict]:
-    """Get combined context from both documents and URLs."""
     try:
         question_embedding = get_embeddings([question])[0]
         
@@ -218,10 +224,7 @@ async def get_context_from_vectors(question: str, user_id: str, max_chunks: int 
         all_contexts = document_contexts + url_contexts
         all_contexts.sort(key=lambda x: x["score"], reverse=True)
         
-        top_contexts = all_contexts[:max_chunks]
-        
-        logger.info(f"Retrieved contexts | user_id={user_id}, document_contexts={len(document_contexts)}, url_contexts={len(url_contexts)}, final_contexts={len(top_contexts)}")
-        return top_contexts
+        return all_contexts[:max_chunks]
         
     except Exception as e:
         logger.error(f"Error getting combined contexts | user_id={user_id}, error={str(e)}")
@@ -247,22 +250,22 @@ END_CONTENT_{i}"""
             )
         
         context_text = "\n\n".join(formatted_contexts)
+        conversation_context = memory_buffer.get_context()
 
         system_prompt = """You are a helpful AI assistant answering questions based on the provided context.
 Follow these rules:
-1. Base your answer ONLY on the provided content blocks marked with [CONTENT_X]
+1. Base your answer ONLY on the provided content blocks marked with [CONTENT_X] and previous conversation context
 2. If the answer isn't in the context, say "I cannot find the relevant information in the provided documents."
 3. Be clear, concise, and accurate
-4. After your answer, you must specify which content blocks you used in this format:
+4. After your answer, specify which content blocks you used in this format:
    <SOURCES_USED>
    CONTENT_1: [URL] example.com
    CONTENT_3: [DOCUMENT] filename.pdf
-   </SOURCES_USED>
-5. Only include content blocks that directly contributed to your answer
-6. Do not mention content block numbers in your answer text"""
+   </SOURCES_USED>"""
 
         messages = [
             {"role": "system", "content": system_prompt},
+            *conversation_context,
             {"role": "user", "content": f"CONTEXT:\n{context_text}\n\nQUESTION: {question}"}
         ]
 
@@ -274,7 +277,6 @@ Follow these rules:
         )
 
         full_response = response.choices[0].message.content.strip()
-        
         answer_text = full_response
         used_sources = []
         
@@ -287,9 +289,8 @@ Follow these rules:
             
             for line in source_lines:
                 if ":" in line:
-                    content_num, _ = line.split(":", 1)
+                    content_num = line.split(":")[0].strip()
                     content_index = int(content_num.replace("CONTENT_", "")) - 1
-                    
                     if content_index < len(contexts):
                         ctx = contexts[content_index]
                         source = {
@@ -300,17 +301,7 @@ Follow these rules:
                         if source not in used_sources:
                             used_sources.append(source)
 
-        if not used_sources and "cannot find" not in answer_text.lower():
-            seen_docs = set()
-            for ctx in contexts:
-                doc_key = (ctx["document_id"], ctx["filename"])
-                if doc_key not in seen_docs:
-                    seen_docs.add(doc_key)
-                    used_sources.append({
-                        "filename": ctx["filename"],
-                        "document_id": ctx["document_id"],
-                        "file_type": ctx["file_type"]
-                    })
+        memory_buffer.add_interaction(question, answer_text)
 
         return {
             "answer": answer_text,
@@ -323,14 +314,13 @@ Follow these rules:
 async def validate_insurance_question(question: str) -> bool:
     question_words = set(lemmatizer.lemmatize(word.lower()) for word in question.split())
     lemmatized_keywords = set(lemmatizer.lemmatize(keyword.lower()) for keyword in keywords)
-    matching_words = question_words.intersection(lemmatized_keywords)
-    return len(matching_words) > 0
+    return len(question_words.intersection(lemmatized_keywords)) > 0
 
 @router.post("/{user_id}/ask")
 async def ask_question(user_id: str, request: QuestionRequest) -> QuestionResponse:
     start_time = datetime.now(timezone.utc)
     try:
-        if request.max_chunks < 1 or request.max_chunks > 20:
+        if not (1 <= request.max_chunks <= 20):
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -348,28 +338,11 @@ async def ask_question(user_id: str, request: QuestionRequest) -> QuestionRespon
                 }
             )
 
-        # is_insurance_related = await validate_insurance_question(request.question)
-        # if not is_insurance_related:
-        #     return JSONResponse(
-        #         content={
-        #             "user_id": user_id,
-        #             "question": request.question,
-        #             "answer": "This question is not related to insurance.",
-        #             "sources": [],
-        #             "suggested_questions": [],
-        #             "model_used": request.model,
-        #             "status_code": "200"
-        #         }
-        #     )
-
-        vector_start_time = datetime.now(timezone.utc)
         contexts = await get_context_from_vectors(
             request.question,
             user_id,
             request.max_chunks
         )
-        vector_duration = (datetime.now(timezone.utc) - vector_start_time).total_seconds()
-        logger.info(f"Vector search completed | user_id={user_id}, duration_seconds={vector_duration}")
 
         result = await generate_answer(
             request.question,
@@ -383,9 +356,6 @@ async def ask_question(user_id: str, request: QuestionRequest) -> QuestionRespon
             request.model,
             request.question
         )
-
-        total_duration = (datetime.now(timezone.utc) - start_time).total_seconds()
-        logger.info(f"Question processing completed | user_id={user_id}, total_duration_seconds={total_duration}")
 
         return JSONResponse(
             content={
