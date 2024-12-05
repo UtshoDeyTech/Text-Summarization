@@ -21,8 +21,9 @@ S3_BUCKET_NAME=os.environ.get("S3_BUCKET_NAME")
 
 BACKEND_URL=os.environ.get("BACKEND_URL")
 
-
-SEQ_URL=os.environ.get("SEQ_URL")
-SEQ_API_KEY=os.environ.get("SEQ_API_KEY")
+SEQ_URL = os.getenv("SEQ_URL")
+SEQ_API_KEY = os.getenv("SEQ_API_KEY")
+LOG_ENVIROMENT=os.environ.get("LOG_ENVIROMENT")
+LOG_APP_NAME=os.environ.get("LOG_APP_NAME")
 
 AI_VALUE_ASP=os.environ.get("AI_VALUE_ASP")
