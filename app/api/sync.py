@@ -1,9 +1,9 @@
 import logging
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from app.service.s3_storage import list_objects, S3_BUCKET_NAME
+from app.service.s3_storage import list_objects, delete_object, S3_BUCKET_NAME
 from app.service.pinecone_client import (
-    find_document_namespace, 
+    find_document_namespace,
     list_documents_from_pinecone,
     initialize_pinecone
 )
@@ -16,10 +16,37 @@ SUPPORTED_EXTENSIONS = {
     'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 }
 
-@router.post("/{user_id}/sync_pinecone")
-async def sync_pinecone(request: Request, user_id: str):
+async def delete_from_s3(user_id: str, files: set) -> int:
+    """Delete files from S3 bucket and return count of deleted files."""
+    deleted_count = 0
+    for file in files:
+        try:
+            key = f"{user_id}/{file}"
+            delete_object(S3_BUCKET_NAME, key)
+            deleted_count += 1
+            logger.info(f"Deleted file from S3 | user_id={user_id}, file={file}")
+        except Exception as e:
+            logger.error(f"Failed to delete S3 file | user_id={user_id}, file={file}, error={str(e)}")
+    return deleted_count
+
+async def delete_from_pinecone(user_id: str, files: set, index) -> int:
+    """Delete files from Pinecone and return count of deleted namespaces."""
+    deleted_count = 0
+    for file in files:
+        try:
+            namespace = find_document_namespace(user_id, file)
+            if namespace:
+                index.delete(delete_all=True, namespace=namespace)
+                deleted_count += 1
+                logger.info(f"Deleted namespace from Pinecone | user_id={user_id}, file={file}, namespace={namespace}")
+        except Exception as e:
+            logger.error(f"Failed to delete Pinecone namespace | user_id={user_id}, file={file}, error={str(e)}")
+    return deleted_count
+
+@router.post("/{user_id}/sync_bidirectional")
+async def sync_bidirectional(request: Request, user_id: str):
     try:
-        logger.info(f"Starting Pinecone sync | user_id={user_id}")
+        logger.info(f"Starting bidirectional sync | user_id={user_id}")
         
         # Get files from S3
         response = list_objects(S3_BUCKET_NAME)
@@ -34,45 +61,49 @@ async def sync_pinecone(request: Request, user_id: str):
         pinecone_docs = list_documents_from_pinecone(user_id)
         pinecone_files = {doc['name'] for doc in pinecone_docs}
         
-        # Find orphaned files (in Pinecone but not in S3)
-        orphaned_files = pinecone_files - s3_files
+        # Find files that exist in both systems
+        common_files = s3_files & pinecone_files
         
-        if not orphaned_files:
+        # Find files to delete from each system
+        s3_only_files = s3_files - pinecone_files
+        pinecone_only_files = pinecone_files - s3_files
+        
+        if not s3_only_files and not pinecone_only_files:
             logger.info("No orphaned files found - all documents are in sync")
             return JSONResponse(content={
                 "user_id": user_id,
                 "sync_status": "in_sync",
                 "s3_files_count": len(s3_files),
                 "pinecone_files_count": len(pinecone_files),
-                "common_files": list(s3_files & pinecone_files),
+                "common_files": list(common_files),
                 "message": "All documents are synchronized between S3 and Pinecone",
                 "status_code": "200"
             })
         
-        # Initialize Pinecone once before the loop
+        # Initialize Pinecone for deletion operations
         index = initialize_pinecone()
         
-        # Delete orphaned files
-        deleted_count = 0
-        for orphaned_file in orphaned_files:
-            try:
-                namespace = find_document_namespace(user_id, orphaned_file)
-                if namespace:
-                    index.delete(delete_all=True, namespace=namespace)
-                    deleted_count += 1
-                    logger.info(f"Deleted orphaned namespace | file={orphaned_file}, namespace={namespace}")
-            except Exception as e:
-                logger.error(f"Failed to delete namespace for file | file={orphaned_file}, error={str(e)}")
-                continue
+        # Delete orphaned files from both systems
+        s3_deleted = await delete_from_s3(user_id, s3_only_files)
+        pinecone_deleted = await delete_from_pinecone(user_id, pinecone_only_files, index)
         
-        logger.info(f"Sync completed | deleted_count={deleted_count}, orphaned_files={len(orphaned_files)}")
+        logger.info(
+            f"Sync completed | s3_deleted={s3_deleted}, pinecone_deleted={pinecone_deleted}, "
+            f"s3_orphaned={len(s3_only_files)}, pinecone_orphaned={len(pinecone_only_files)}"
+        )
         
         return JSONResponse(content={
             "user_id": user_id,
             "sync_status": "cleanup_performed",
-            "namespaces_deleted": deleted_count,
-            "orphaned_files_removed": len(orphaned_files),
-            "orphaned_files": list(orphaned_files),
+            "s3_files_deleted": {
+                "count": s3_deleted,
+                "files": list(s3_only_files)
+            },
+            "pinecone_namespaces_deleted": {
+                "count": pinecone_deleted,
+                "files": list(pinecone_only_files)
+            },
+            "remaining_files": list(common_files),
             "status_code": "200"
         })
         
