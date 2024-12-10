@@ -212,7 +212,7 @@ Rules:
 2. If the answer isn't in the context, say so
 3. Prioritize information from CLIENT sources over GLOBAL sources
 4. {'Since this appears to be a follow-up question, consider the previous context in your answer.' if is_followup else ''}
-5. {'Multiple client sources found. Suggest asking a more specific question.' if needs_clarification else ''}
+5. {'Specify the exact client or data source you want to query (like client ID, name, or date range).' if needs_clarification else ''}
 
 After your answer, list the sources used in this format:
 <SOURCES_USED>
