@@ -33,7 +33,7 @@ class MemoryBuffer:
             "answer": answer,
             "timestamp": datetime.now(timezone.utc),
             "context_summary": summary,
-            "sources": [{"filename": ctx["filename"], "source_type": ctx["source_type"]} for ctx in contexts]
+            "sources": contexts  # Store full context objects instead of just filename and type
         })
         self.context_history.append(contexts)
 
@@ -42,7 +42,11 @@ class MemoryBuffer:
         for item in self.conversation_history:
             messages.extend([
                 {"role": "user", "content": item["question"]},
-                {"role": "assistant", "content": f"{item['answer']}\nContext: {item['context_summary']}"}
+                {
+                    "role": "assistant", 
+                    "content": f"{item['answer']}\nContext: {item['context_summary']}",
+                    "sources": item['sources']  # Include full source information
+                }
             ])
         return messages
 
