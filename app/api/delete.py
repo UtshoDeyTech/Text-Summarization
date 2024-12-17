@@ -14,7 +14,10 @@ router = APIRouter()
 
 SUPPORTED_EXTENSIONS = {
     'pdf': 'application/pdf',
-    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'csv': 'text/csv',
+    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'xls': 'application/vnd.ms-excel'
 }
 
 @router.delete("/{user_id}/delete_document/{document_id}")
