@@ -5,6 +5,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
 from PyPDF2 import PdfReader
 from docx import Document
+import pandas as pd
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from io import BytesIO
 from botocore.exceptions import ClientError
@@ -30,7 +31,10 @@ text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=20
 
 SUPPORTED_EXTENSIONS = {
     'pdf': 'application/pdf',
-    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'csv': 'text/csv',
+    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'xls': 'application/vnd.ms-excel'
 }
 
 def create_doc_info(payload, headers):
@@ -63,6 +67,34 @@ def extract_text_from_docx(file_obj):
         text += para.text + "\n"
     return text
 
+def extract_text_from_csv(file_obj):
+    """Extract text from CSV file."""
+    try:
+        df = pd.read_csv(file_obj)
+        # Convert DataFrame to string, handling NaN values
+        text = df.fillna('').to_string(index=False)
+        return text
+    except Exception as e:
+        logger.error(f"Error extracting text from CSV: {e}")
+        raise
+
+def extract_text_from_excel(file_obj):
+    """Extract text from Excel file."""
+    try:
+        df = pd.read_excel(file_obj, sheet_name=None)  # Read all sheets
+        text = ""
+        
+        # Process each sheet
+        for sheet_name, sheet_df in df.items():
+            text += f"\nSheet: {sheet_name}\n"
+            text += sheet_df.fillna('').to_string(index=False)
+            text += "\n"
+            
+        return text
+    except Exception as e:
+        logger.error(f"Error extracting text from Excel: {e}")
+        raise
+
 def process_document(file_obj, file_extension):
     try:
         logger.info(f"Starting text extraction | file_type={file_extension}")
@@ -71,6 +103,10 @@ def process_document(file_obj, file_extension):
             text = extract_text_from_pdf(file_obj)
         elif file_extension == 'docx':
             text = extract_text_from_docx(file_obj)
+        elif file_extension == 'csv':
+            text = extract_text_from_csv(file_obj)
+        elif file_extension in ['xlsx', 'xls']:
+            text = extract_text_from_excel(file_obj)
         else:
             raise ValueError(f"Unsupported file type: {file_extension}")
 
@@ -182,7 +218,6 @@ async def upload_document(
             } 
             for chunk in chunks
         ]
-
 
         upsert_vectors(user_id, embeddings, metadatas, ids, file.filename)
         pinecone_duration = (datetime.utcnow() - pinecone_start).total_seconds()
