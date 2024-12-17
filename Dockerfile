@@ -9,6 +9,7 @@ COPY requirements.txt .
 
 # Install the required packages
 RUN pip install --no-cache-dir -r requirements.txt
+RUN playwright install chromium
 
 # Copy the rest of the application code
 COPY . .
