@@ -1,17 +1,19 @@
-import logging
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from datetime import datetime
-from langchain_community.document_loaders import UnstructuredURLLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from urllib.parse import urlparse
+from bs4 import BeautifulSoup
+import re
+from typing import List
+from playwright.async_api import async_playwright
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from app.service.openai_client import get_embeddings
 from app.service.pinecone_client_url import upsert_url_vectors
 from app.service.log_client import logger
 
 router = APIRouter()
 
-# Define text splitter here instead of importing from upload
+# Define text splitter
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
 
 def is_valid_url(url: str) -> bool:
@@ -22,17 +24,70 @@ def is_valid_url(url: str) -> bool:
     except Exception:
         return False
 
-def extract_text_from_url(url: str) -> str:
-    """Extract text content from URL using UnstructuredURLLoader"""
+def clean_text(text: str) -> str:
+    """Clean extracted text using regex patterns"""
+    # Remove extra whitespace and newlines
+    text = re.sub(r'\s+', ' ', text)
+    # Remove special characters but keep basic punctuation
+    text = re.sub(r'[^\w\s.,!?-]', '', text)
+    # Remove any URLs
+    text = re.sub(r'http\S+|www.\S+', '', text)
+    return text.strip()
+
+async def extract_text_with_playwright(url: str) -> List[str]:
+    """Extract text from dynamic websites using Playwright"""
     try:
-        loader = UnstructuredURLLoader(urls=[url])
-        data = loader.load()
-        if not data or len(data) == 0:
-            raise ValueError("No content extracted from URL")
-        return data[0].page_content
+        async with async_playwright() as p:
+            # Launch browser in headless mode
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            )
+            
+            # Create new page and navigate to URL
+            page = await context.new_page()
+            await page.goto(url, wait_until='networkidle', timeout=30000)
+            
+            # Wait for content to load
+            await page.wait_for_timeout(2000)  # Additional wait for dynamic content
+            
+            # Extract text from specific elements
+            content_elements = await page.evaluate("""
+                () => {
+                    const elements = document.querySelectorAll('p, h1, h2, h3, h4, h5, h6, article, section, div');
+                    const textContents = [];
+                    elements.forEach(element => {
+                        const text = element.innerText;
+                        if (text && text.length > 20) {
+                            textContents.push(text);
+                        }
+                    });
+                    return textContents;
+                }
+            """)
+            
+            # Clean and process extracted text
+            cleaned_texts = [clean_text(text) for text in content_elements if clean_text(text)]
+            full_text = '\n'.join(cleaned_texts)
+            
+            # Close browser
+            await browser.close()
+            
+            if not full_text.strip():
+                raise ValueError("No text content could be extracted from URL")
+                
+            # Split text into chunks
+            chunks = text_splitter.split_text(full_text)
+            
+            if not chunks:
+                raise ValueError("No valid chunks created from text content")
+                
+            logger.info(f"Successfully scraped webpage | chunks={len(chunks)}")
+            return chunks
+            
     except Exception as e:
-        logger.error(f"URL content extraction failed | url={url}, error={str(e)}")
-        raise
+        logger.error(f"Error scraping webpage with Playwright | url={url} | error={str(e)}")
+        raise ValueError(f"Failed to extract content: {str(e)}")
 
 @router.post("/upload_url")
 async def upload_url(url: str):
@@ -49,19 +104,7 @@ async def upload_url(url: str):
 
         # Extract text from URL
         logger.info(f"Processing URL | url={url}")
-        text_content = extract_text_from_url(url)
-
-        if not text_content.strip():
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "status_code": "400",
-                    "error_messages": ["No text content could be extracted from URL"]
-                }
-            )
-
-        # Create chunks using the local text splitter
-        chunks = text_splitter.split_text(text_content)
+        chunks = await extract_text_with_playwright(url)
 
         # Generate embeddings
         embeddings = get_embeddings(chunks)
