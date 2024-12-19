@@ -131,45 +131,28 @@ async def process_contexts_in_batches(
     batch_size: int = 4
 ) -> Dict:
     try:
-        # Check if this is a followup question
+        # Initialize optimizer early to use for all token calculations
+        optimizer = ContextOptimizer(model)
+        
+        # Limit conversation context to last 2 messages to reduce tokens
+        conversation_context = conversation_context[-2:] if conversation_context else []
+        
+        # Check if this is a followup question with reduced prompt
         if conversation_context:
             followup_check = await openai.ChatCompletion.acreate(
-                model=model,
+                model="gpt-3.5-turbo",  # Use 3.5 for metadata tasks
                 messages=[
-                    {"role": "system", "content": "Determine if this question is a followup to the previous conversation and requires previous context to answer accurately."},
-                    {"role": "user", "content": f"Previous conversation:\n{str(conversation_context)}\n\nNew question: {question}"}
+                    {"role": "system", "content": "Is this a followup question? Answer yes or no."},
+                    {"role": "user", "content": f"Previous: {conversation_context[-1].get('content', '')}\nNew: {question}"}
                 ],
                 temperature=0.3,
-                max_tokens=100
+                max_tokens=10
             )
             
             is_followup = "yes" in followup_check.choices[0].message.content.lower()
-            
-            if is_followup:
-                # Get sources from previous conversation
-                prev_sources = []
-                for msg in conversation_context:
-                    if isinstance(msg, dict) and msg.get("role") == "assistant":
-                        if "sources" in msg:
-                            prev_sources.extend(msg["sources"])
-                
-                # Combine previous sources with current contexts
-                if prev_sources:
-                    # Create a set of unique filenames from previous sources
-                    prev_filenames = {src["filename"] for src in prev_sources}
-                    
-                    # Filter current contexts to include previous sources and new relevant contexts
-                    contexts = [
-                        ctx for ctx in contexts 
-                        if ctx["filename"] in prev_filenames or 
-                        any(text.lower() in ctx["text"].lower() 
-                            for text in [question.lower()])
-                    ]
         else:
             is_followup = False
 
-        optimizer = ContextOptimizer(model)
-        
         if not contexts:
             return {
                 "answer": "I cannot find relevant information to answer your question.",
@@ -178,39 +161,33 @@ async def process_contexts_in_batches(
                 "is_followup": is_followup
             }
 
+        # Process conversation history more efficiently
+        if conversation_context:
+            initial_prompt = "Summarize key points relevant to: " + question
+            messages = [
+                {"role": "system", "content": initial_prompt},
+                conversation_context[-1]
+            ]
+            
+            history_response = await openai.ChatCompletion.acreate(
+                model="gpt-3.5-turbo",  # Use 3.5 for summary
+                messages=messages,
+                temperature=0.7,
+                max_tokens=100
+            )
+            context_summary = history_response.choices[0].message.content
+        else:
+            context_summary = None
+
+        # Prioritize contexts but limit total number
+        max_contexts = 8  # Reduced from default
+        client_contexts = [ctx for ctx in contexts if ctx["source_type"] == "client"][:max_contexts//2]
+        global_contexts = [ctx for ctx in contexts if ctx["source_type"] == "global"][:max_contexts//2]
+        
         all_answers = []
         all_sources = []
         needs_clarification = False
 
-        # Process conversation history
-        history_tokens = optimizer.count_tokens(str(conversation_context))
-        if history_tokens > optimizer.max_tokens // 3:
-            initial_prompt = {
-                "role": "system",
-                "content": "Summarize the key points from this conversation history, focusing on information relevant to the current question."
-            }
-            messages = [initial_prompt, *conversation_context[-2:]]
-        else:
-            initial_prompt = {
-                "role": "system",
-                "content": "Review the conversation history and note key points relevant to the current question."
-            }
-            messages = [initial_prompt, *conversation_context]
-            
-        messages.append({"role": "user", "content": f"Current question: {question}"})
-        
-        history_response = await openai.ChatCompletion.acreate(
-            model=model,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=200
-        )
-        context_summary = history_response.choices[0].message.content
-
-        # Prioritize contexts
-        client_contexts = [ctx for ctx in contexts if ctx["source_type"] == "client"]
-        global_contexts = [ctx for ctx in contexts if ctx["source_type"] == "global"]
-        
         # Process client contexts first
         for i in range(0, len(client_contexts), batch_size):
             batch = client_contexts[i:i + batch_size]
@@ -219,78 +196,46 @@ async def process_contexts_in_batches(
                 contexts=batch,
                 model=model,
                 conversation_summary=context_summary if i == 0 else None,
-                previous_findings="\n".join(all_answers) if all_answers else None,
+                previous_findings="\n".join(all_answers[-1:]) if all_answers else None,  # Only use last answer
                 optimizer=optimizer
             )
             all_answers.append(batch_response["answer"])
             all_sources.extend(batch_response["sources"])
             needs_clarification = needs_clarification or batch_response["needs_clarification"]
 
-        # Only process global contexts if needed
-        if not all_answers or "I cannot find relevant information" in all_answers[-1]:
+        # Only process global contexts if needed and have token budget
+        if (not all_answers or "I cannot find relevant information" in all_answers[-1]) and \
+           optimizer.count_tokens("\n".join(all_answers)) < optimizer.max_tokens // 2:
             for i in range(0, len(global_contexts), batch_size):
                 batch = global_contexts[i:i + batch_size]
                 batch_response = await process_single_batch(
                     question=question,
                     contexts=batch,
                     model=model,
-                    previous_findings="\n".join(all_answers) if all_answers else None,
+                    previous_findings=all_answers[-1] if all_answers else None,  # Only use last answer
                     optimizer=optimizer
                 )
                 all_answers.append(batch_response["answer"])
                 all_sources.extend(batch_response["sources"])
 
-        # Create final summary
-        final_prompt = f"""Synthesize a coherent answer from these findings:
-{'-' * 40}
-{chr(10).join(all_answers)}
-{'-' * 40}
+        # Create final summary with reduced prompt
+        final_prompt = f"""Synthesize a clear answer from these findings:
+{all_answers[-2:] if len(all_answers) > 1 else all_answers}  # Only use last 2 answers
 
-Create a clear, non-repetitive response that addresses the question: {question}
-Include all relevant source references in your answer.
-"""
-        
-        if optimizer.count_tokens(final_prompt) > optimizer.max_tokens // 2:
-            all_answers = all_answers[:3]
-            final_prompt = f"""Synthesize key points from these findings to answer the question:
-{chr(10).join(all_answers)}
-
-Question: {question}
-Include all relevant source references in your answer."""
+Question: {question}"""
 
         final_response = await openai.ChatCompletion.acreate(
             model=model,
             messages=[
-                {"role": "system", "content": "Create a coherent summary from multiple findings. Always cite sources used."},
+                {"role": "system", "content": "Create a concise summary."},
                 {"role": "user", "content": final_prompt}
             ],
             temperature=0.7,
-            max_tokens=800
+            max_tokens=500  # Reduced from 800
         )
 
-        # Ensure we have sources, even for followup questions
-        if not all_sources and is_followup:
-            # Get sources from conversation context that are relevant to the answer
-            answer_text = final_response.choices[0].message.content.lower()
-            relevant_sources = [
-                src for msg in conversation_context 
-                if isinstance(msg, dict) and msg.get("role") == "assistant"
-                for src in msg.get("sources", [])
-                if any(term.lower() in answer_text for term in [
-                    src.get("filename", ""),
-                    src.get("text", "")[:100]
-                ])
-            ]
-            all_sources.extend(relevant_sources)
-
-        # Deduplicate sources while preserving order
-        seen = set()
-        unique_sources = []
-        for s in all_sources:
-            key = (s["filename"], s.get("document_id", ""))
-            if key not in seen:
-                seen.add(key)
-                unique_sources.append(s)
+        # Limit sources to most relevant ones
+        unique_sources = list({s["filename"]: s for s in all_sources[:5]}.values())
 
         return {
             "answer": final_response.choices[0].message.content,
