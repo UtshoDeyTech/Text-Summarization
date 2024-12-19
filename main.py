@@ -3,7 +3,8 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import upload, delete, list, sync, qa, diagnostics, url_upload
+from app.api import upload, delete, list, sync, diagnostics, url_upload
+from app.api.question_answering import qa
 from app.service.log_client import logger, log_api_request, log_error
 from time import time
 
