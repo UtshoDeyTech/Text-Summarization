@@ -49,68 +49,6 @@ def get_namespace(user_id: str, document_id: str = None):
         return f"{user_id}_{uuid.uuid4()}"
     return f"{user_id}"
 
-def upsert_vectors(user_id: str, vectors, metadatas, ids, document_id: str):
-    """Upsert vectors with metadata into Pinecone."""
-    try:
-        namespace = get_namespace(user_id, document_id)
-        logger.info(f"Upserting vectors | namespace={namespace}, vector_count={len(vectors)}")
-        
-        for metadata in metadatas:
-            metadata['upload_date'] = metadata.get('upload_date', datetime.utcnow().isoformat())
-            metadata['namespace'] = namespace
-                
-        index = initialize_pinecone()
-        index.upsert(
-            vectors=list(zip(ids, vectors, metadatas)),
-            namespace=namespace
-        )
-        logger.info(f"Vector upsert successful | namespace={namespace}, vector_count={len(vectors)}")
-    except Exception as e:
-        logger.error(f"Vector upsert failed | user_id={user_id}, vector_count={len(vectors)}, error={str(e)}")
-        raise
-
-def find_document_namespace(user_id: str, document_id: str) -> str:
-    """Find the namespace containing a specific document."""
-    try:
-        logger.info(f"Finding namespace for document | user_id={user_id}, document_id={document_id}")
-        
-        user_namespaces = get_user_namespaces(user_id)
-        if not user_namespaces:
-            return None
-            
-        index = initialize_pinecone()
-        
-        for namespace in user_namespaces:
-            try:
-                results = index.query(
-                    vector=[0] * DIMENSION,
-                    top_k=1,
-                    namespace=namespace,
-                    include_metadata=True
-                )
-                
-                if not results.matches:
-                    continue
-                    
-                metadata = results.matches[0].metadata
-                if metadata:
-                    stored_doc_id = metadata.get('document_id', '')
-                    stored_filename = metadata.get('filename', '')
-                    
-                    if stored_doc_id == document_id or stored_filename == document_id:
-                        logger.info(f"Found document in namespace | namespace={namespace}")
-                        return namespace
-                        
-            except Exception as e:
-                logger.error(f"Error checking namespace | namespace={namespace}, error={str(e)}")
-                continue
-                
-        return None
-        
-    except Exception as e:
-        logger.error(f"Error finding document namespace | error={str(e)}")
-        return None
-
 def list_documents_from_pinecone(user_id: str) -> list:
     """Get all documents for a user from Pinecone metadata."""
     try:
@@ -196,17 +134,60 @@ def list_all_vectors(user_id: str):
         logger.error(f"Vector listing failed | user_id={user_id}, error={str(e)}")
         return []
 
-def delete_vectors(user_id: str, document_id: str, vector_ids: list = None):
+def find_document_namespace(document_id: str) -> str:
+    """Find the namespace containing a specific document."""
+    try:
+        logger.info(f"Finding namespace for document | document_id={document_id}")
+        index = initialize_pinecone()
+        
+        # Check if the namespace exists by trying to query it
+        try:
+            results = index.query(
+                vector=[0] * DIMENSION,
+                top_k=1,
+                namespace=document_id,  # Using document_id as namespace
+                include_metadata=True
+            )
+            
+            if results.matches:
+                logger.info(f"Found document in namespace | namespace={document_id}")
+                return document_id
+                
+        except Exception as e:
+            logger.error(f"Error checking namespace | namespace={document_id}, error={str(e)}")
+            
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error finding document namespace | error={str(e)}")
+        return None
+
+def upsert_vectors(vectors, metadatas, ids, document_id: str):
+    """Upsert vectors with metadata into Pinecone."""
+    try:
+        namespace = document_id  # Using document_id as namespace
+        logger.info(f"Upserting vectors | namespace={namespace}, vector_count={len(vectors)}")
+        
+        for metadata in metadatas:
+            metadata['upload_date'] = metadata.get('upload_date', datetime.utcnow().isoformat())
+            metadata['namespace'] = namespace
+                
+        index = initialize_pinecone()
+        index.upsert(
+            vectors=list(zip(ids, vectors, metadatas)),
+            namespace=namespace
+        )
+        logger.info(f"Vector upsert successful | namespace={namespace}, vector_count={len(vectors)}")
+    except Exception as e:
+        logger.error(f"Vector upsert failed | namespace={namespace}, vector_count={len(vectors)}, error={str(e)}")
+        raise
+
+def delete_vectors(document_id: str, vector_ids: list = None):
     """Delete vectors for a document, either by namespace or specific IDs."""
     try:
-        logger.info(f"Attempting to delete vectors | user_id={user_id}, document_id={document_id}")
+        logger.info(f"Attempting to delete vectors | document_id={document_id}")
         
-        # Find the namespace containing the document
-        namespace = find_document_namespace(user_id, document_id)
-        if not namespace:
-            logger.warning(f"No namespace found for document | document_id={document_id}")
-            return False
-            
+        namespace = document_id  # Using document_id as namespace
         index = initialize_pinecone()
         
         # If specific vector IDs are provided, delete only those
@@ -229,5 +210,5 @@ def delete_vectors(user_id: str, document_id: str, vector_ids: list = None):
                 raise
                 
     except Exception as e:
-        logger.error(f"Vector deletion failed | user_id={user_id}, document_id={document_id}, error={str(e)}")
+        logger.error(f"Vector deletion failed | document_id={document_id}, error={str(e)}")
         raise
