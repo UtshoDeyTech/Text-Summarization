@@ -1,11 +1,10 @@
-import logging
 import os
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import upload, delete, list, sync, diagnostics, url_upload, document_upload, document_delete
+from app.api import list, sync, diagnostics, upload_anc_document, document_upload, document_delete
 from app.api.question_answering import qa
-from app.service.log_client import logger, log_api_request, log_error
+from app.service.log_client import logger, log_api_request
 from time import time
 
 # Load environment variables
@@ -42,10 +41,8 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(upload.router)
 app.include_router(document_upload.router)
-app.include_router(url_upload.router)
-app.include_router(delete.router)
+app.include_router(upload_anc_document.router)
 app.include_router(document_delete.router)
 app.include_router(list.router)
 app.include_router(sync.router)
