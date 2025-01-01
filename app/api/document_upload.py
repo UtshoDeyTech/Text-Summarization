@@ -16,7 +16,7 @@ from app.service.pinecone_client import (
 from app.service.log_client import logger
 
 router = APIRouter()
-text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=100)
 
 SUPPORTED_EXTENSIONS = {
     'pdf': 'application/pdf',
