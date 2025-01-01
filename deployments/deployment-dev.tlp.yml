@@ -61,6 +61,8 @@ spec:
               value: LOG_ENVIROMENT_PLACEHOLDER
             - name: LOG_APP_NAME
               value: LOG_APP_NAME_PLACEHOLDER
+            - name: VALIDATION_DAYS
+              value: VALIDATION_DAYS_PLACEHOLDER
 
 ---
 apiVersion: v1
