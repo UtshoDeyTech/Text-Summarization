@@ -1,5 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from fastapi.responses import JSONResponse
+from typing import Optional
 from datetime import datetime
 from PyPDF2 import PdfReader
 from docx import Document
@@ -150,6 +151,7 @@ def process_document(file_obj, file_extension):
 async def document_upload(
     request: Request,
     document_id: str,
+    document_type: Optional[str],
     file: UploadFile = File(...)
 ):
     start_time = datetime.utcnow()
@@ -198,6 +200,7 @@ async def document_upload(
             "document_id": document_id,
             "filename": file.filename,
             "file_type": file_extension,
+            "document_type": document_type, 
             "upload_date": datetime.utcnow().isoformat()
         }
         base_size = len(str(base_metadata).encode('utf-8'))
@@ -227,6 +230,7 @@ async def document_upload(
                 "document_id": document_id,
                 "chunks_stored": len(valid_chunks),
                 "file_type": file_extension,
+                "document_type": document_type, 
                 "processing_time_seconds": total_duration,
                 "status_code": "200"
             }
