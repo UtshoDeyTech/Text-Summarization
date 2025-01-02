@@ -1,12 +1,15 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File, Request
+from typing import Optional
 from fastapi.responses import JSONResponse
 from datetime import datetime
 from urllib.parse import urlparse
-from bs4 import BeautifulSoup
 import re
 from typing import List
 from playwright.async_api import async_playwright
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+import PyPDF2
+import docx
+import io
 from app.service.openai_client import get_embeddings
 from app.service.pinecone_client_url import upsert_url_vectors
 from app.service.log_client import logger
@@ -89,10 +92,34 @@ async def extract_text_with_playwright(url: str) -> List[str]:
         logger.error(f"Error scraping webpage with Playwright | url={url} | error={str(e)}")
         raise ValueError(f"Failed to extract content: {str(e)}")
 
-@router.post("/upload_url")
-async def upload_url(url: str):
+async def extract_text_from_pdf(file_content: bytes) -> str:
+    """Extract text from PDF file"""
     try:
-        # Validate URL
+        pdf_file = io.BytesIO(file_content)
+        reader = PyPDF2.PdfReader(pdf_file)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() + "\n"
+        return text
+    except Exception as e:
+        logger.error(f"PDF text extraction failed | error={str(e)}")
+        raise ValueError(f"Failed to extract PDF content: {str(e)}")
+
+async def extract_text_from_docx(file_content: bytes) -> str:
+    """Extract text from DOCX file"""
+    try:
+        doc = docx.Document(io.BytesIO(file_content))
+        text = ""
+        for paragraph in doc.paragraphs:
+            text += paragraph.text + "\n"
+        return text
+    except Exception as e:
+        logger.error(f"DOCX text extraction failed | error={str(e)}")
+        raise ValueError(f"Failed to extract DOCX content: {str(e)}")
+
+@router.post("/upload_anc_global_url")
+async def upload_anc_global_url(url: str):
+    try:
         if not is_valid_url(url):
             raise HTTPException(
                 status_code=400,
@@ -102,14 +129,10 @@ async def upload_url(url: str):
                 }
             )
 
-        # Extract text from URL
         logger.info(f"Processing URL | url={url}")
         chunks = await extract_text_with_playwright(url)
-
-        # Generate embeddings
         embeddings = get_embeddings(chunks)
         
-        # Create metadata
         document_id = urlparse(url).netloc
         ids = [f"{document_id}_{i}" for i in range(len(chunks))]
         metadatas = [
@@ -123,14 +146,14 @@ async def upload_url(url: str):
             for chunk in chunks
         ]
 
-        # Upload to Pinecone
-        upsert_url_vectors(embeddings, metadatas, ids, url)
+        namespace = upsert_url_vectors(embeddings, metadatas, ids, url)
 
         return JSONResponse(
             content={
                 "document_id": document_id,
                 "chunks_stored": len(chunks),
                 "url": url,
+                "namespace": namespace,
                 "status_code": "200"
             }
         )
@@ -139,6 +162,85 @@ async def upload_url(url: str):
         raise
     except Exception as e:
         error_msg = f"URL upload failed | url={url}, error={str(e)}"
+        logger.error(error_msg)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "status_code": "500",
+                "error_messages": [str(e)]
+            }
+        )
+
+@router.post("/upload_anc_global_document")
+async def upload_anc_global_document(
+    request: Request,
+    file: UploadFile = File(...),
+    form_url: Optional[str] = None
+):
+    try:
+        if not file.filename.lower().endswith(('.pdf', '.docx')):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "status_code": "400",
+                    "error_messages": ["Unsupported file format. Only PDF and DOCX files are accepted"]
+                }
+            )
+
+        # Validate form_url if provided
+        if form_url and not is_valid_url(form_url):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "status_code": "400",
+                    "error_messages": ["Invalid form URL format"]
+                }
+            )
+
+        file_content = await file.read()
+        document_id = file.filename
+
+        if file.filename.lower().endswith('.pdf'):
+            text = await extract_text_from_pdf(file_content)
+        else:
+            text = await extract_text_from_docx(file_content)
+
+        chunks = text_splitter.split_text(text)
+        if not chunks:
+            raise ValueError("No valid text content extracted from document")
+
+        embeddings = get_embeddings(chunks)
+        
+        ids = [f"{document_id}_{i}" for i in range(len(chunks))]
+        metadatas = [
+            {
+                "document_id": document_id,
+                "filename": file.filename,
+                "content_type": "document",
+                "upload_date": datetime.utcnow().isoformat(),
+                "text": chunk,
+                "form_url": form_url if form_url else ""
+            }
+            for chunk in chunks
+        ]
+
+        namespace = upsert_url_vectors(embeddings, metadatas, ids, document_id)
+
+        return JSONResponse(
+            content={
+                "document_id": document_id,
+                "chunks_stored": len(chunks),
+                "filename": file.filename,
+                "namespace": namespace,
+                "form_url": form_url if form_url else "",
+                "status_code": "200"
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = f"Document upload failed | document_id={document_id}, filename={file.filename}, error={str(e)}"
         logger.error(error_msg)
         raise HTTPException(
             status_code=500,

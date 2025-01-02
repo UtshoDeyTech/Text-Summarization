@@ -79,7 +79,7 @@ def find_url_namespace(url: str) -> str:
         logger.error(f"Error finding URL namespace | error={str(e)}")
         return None
 
-def upsert_url_vectors(vectors, metadatas, ids, url: str):
+def upsert_url_vectors(vectors, metadatas, ids, url: str) -> str:
     """Upsert vectors with metadata into Pinecone for URL content"""
     try:
         # Check if URL already exists and delete if found
@@ -104,6 +104,7 @@ def upsert_url_vectors(vectors, metadatas, ids, url: str):
         )
         
         logger.info(f"URL vector upsert successful | namespace={namespace}, vector_count={len(vectors)}")
+        return namespace
         
     except Exception as e:
         logger.error(f"URL vector upsert failed | url={url}, error={str(e)}")
