@@ -2,7 +2,10 @@ from typing import List, Tuple
 from collections import deque
 from datetime import datetime, timezone
 import openai
-from app.service.log_client import logger
+from app.service.log_client import setup_logger
+
+
+logger = setup_logger()
 
 class MemoryBuffer:
     def __init__(self, buffer_size=3):

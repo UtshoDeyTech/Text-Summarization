@@ -41,7 +41,6 @@ def setup_logger():
     
     return logger
 
-logger = setup_logger()
 
 def log_api_request(endpoint, method, status_code=None, **kwargs):
     log_data = {
@@ -51,11 +50,14 @@ def log_api_request(endpoint, method, status_code=None, **kwargs):
         "timestamp": datetime.utcnow().isoformat(),
         **kwargs
     }
-    logger.info(f"API Request: {method} {endpoint} | {str(log_data)}")
+    logger.info(f"API Request: {method} {endpoint}", extra=log_data)
 
 def log_error(message, **kwargs):
     log_data = {
         "timestamp": datetime.utcnow().isoformat(),
         **kwargs
     }
-    logger.error(f"{message} | {str(kwargs)}")
+    logger.error(message, extra=log_data)
+
+    
+logger = setup_logger()
