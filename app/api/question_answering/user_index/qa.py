@@ -186,7 +186,13 @@ Important rules:
 @router.post("/{user_id}/ask", response_model=QuestionResponse)
 async def ask_question(user_id: str, request: QuestionRequest):
     start_time = time.time()
+    
     try:
+        # Override request values with hard-coded values
+        request.max_chunks = 5
+        request.model = "gpt-3.5-turbo"
+        request.num_suggestions = 3
+        
         # Get memory buffer and current sequence
         memory_entries = memory_buffer.get_memory(user_id)
         current_sequence = memory_buffer.get_current_sequence(user_id)
