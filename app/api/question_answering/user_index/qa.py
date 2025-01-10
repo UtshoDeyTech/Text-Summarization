@@ -10,7 +10,7 @@ from pinecone import Pinecone
 from functools import lru_cache
 from app.service.log_client import logger
 from app.service.openai_client import get_embeddings
-from config import OPENAI_API_KEY, PINECONE_CLIENT_INDEX, PINECONE_API_KEY
+from config import OPENAI_API_KEY, PINECONE_CLIENT_INDEX, PINECONE_API_KEY, MODEL, MAX_CHUNKS, NUM_SUGGESTIONS
 
 router = APIRouter()
 openai.api_key = OPENAI_API_KEY
@@ -73,9 +73,6 @@ memory_buffer = MemoryBuffer(max_size=3)
 # Request Models
 class QuestionRequest(BaseModel):
     question: str = Field(..., description="The question to be answered")
-    max_chunks: int = Field(default=DEFAULT_MAX_CHUNKS, description="Maximum number of chunks to retrieve")
-    model: str = Field(default=DEFAULT_MODEL, description="The OpenAI model to use")
-    num_suggestions: int = Field(default=DEFAULT_SUGGESTIONS, description="Number of suggested questions to generate")
 
 # Response Models
 class Source(BaseModel):
@@ -129,14 +126,14 @@ def create_response(user_id: str, request: QuestionRequest, answer: str,
         answer=answer,
         sources=sources,
         suggested_questions=suggested_questions,
-        model_used=request.model,
+        model_used=MODEL,
         status_code="200",
         found=found,
         execution_time=execution_time,
         sequence_number=sequence_number
     )
 
-def get_system_prompt(num_suggestions: int, memory_entries: List[MemoryEntry] = None) -> str:
+def get_system_prompt(memory_entries: List[MemoryEntry] = None) -> str:
     """Generate the system prompt with specific instructions and sequenced memory context."""
     memory_context = ""
     if memory_entries:
@@ -167,7 +164,7 @@ Your response must be in the following JSON format:
         "file_type": "file type here",
         "source_type": "client"
     }},
-    "suggested_questions": [], # Array of exactly {num_suggestions} related follow-up questions if answer is found
+    "suggested_questions": [], # Array of exactly {NUM_SUGGESTIONS} related follow-up questions if answer is found
     "sequence_number": {current_sequence}, # Current position in conversation sequence
     "summary": "Brief summary (max 50 words) connecting current answer with previous context" # Include sequence references if relevant
 }}
@@ -179,7 +176,7 @@ Important rules:
 4. If you can't find the answer, return empty string as answer, false as found, empty object as source
 5. Keep the answer concise and specific
 6. Format numbers, dates, and currency values appropriately
-7. Generate exactly {num_suggestions} relevant follow-up questions only if answer is found
+7. Generate exactly {NUM_SUGGESTIONS} relevant follow-up questions only if answer is found
 8. Make sure suggested questions are closely related to the context and original question
 9. In the summary, reference sequence numbers when connecting current answer with previous context"""
 
@@ -188,11 +185,6 @@ async def ask_question(user_id: str, request: QuestionRequest):
     start_time = time.time()
     
     try:
-        # Override request values with hard-coded values
-        request.max_chunks = 5
-        request.model = "gpt-3.5-turbo"
-        request.num_suggestions = 3
-        
         # Get memory buffer and current sequence
         memory_entries = memory_buffer.get_memory(user_id)
         current_sequence = memory_buffer.get_current_sequence(user_id)
@@ -226,7 +218,7 @@ async def ask_question(user_id: str, request: QuestionRequest):
             # Query each namespace
             results = client_index.query(
                 vector=question_embedding,
-                top_k=request.max_chunks,
+                top_k=MAX_CHUNKS,
                 namespace=namespace,
                 include_metadata=True
             )
@@ -253,7 +245,7 @@ async def ask_question(user_id: str, request: QuestionRequest):
             return create_response(user_id, request, "", [], [], False, execution_time, current_sequence)
 
         # Sort and process top matches
-        sorted_matches = sorted(all_matches, key=lambda x: x.score, reverse=True)[:request.max_chunks]
+        sorted_matches = sorted(all_matches, key=lambda x: x.score, reverse=True)[:MAX_CHUNKS]
         
         # Prepare contexts
         valid_contexts = []
@@ -270,7 +262,7 @@ async def ask_question(user_id: str, request: QuestionRequest):
             valid_contexts.append(context)
 
         # Prepare prompt with memory context
-        system_prompt = get_system_prompt(request.num_suggestions, memory_entries)
+        system_prompt = get_system_prompt(memory_entries)
         contexts_prompt = "\n\n".join([
             f"Context {i+1} from {ctx['filename']} (ID: {ctx['document_id']}):\n{ctx['text']}"
             for i, ctx in enumerate(valid_contexts)
@@ -280,7 +272,7 @@ async def ask_question(user_id: str, request: QuestionRequest):
 
         # Make OpenAI call
         response = openai.ChatCompletion.create(
-            model=request.model,
+            model=MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
