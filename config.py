@@ -29,3 +29,7 @@ LOG_APP_NAME=os.environ.get("LOG_APP_NAME")
 AI_VALUE_ASP=os.environ.get("AI_VALUE_ASP")
 
 VALIDATION_DAYS=os.environ.get("VALIDATION_DAYS")
+
+MAX_CHUNKS = 5
+MODEL = "gpt-3.5-turbo"
+NUM_SUGGESTIONS = 3

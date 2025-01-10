@@ -7,16 +7,13 @@ import time
 from pinecone import Pinecone
 from app.service.log_client import logger
 from app.service.openai_client import get_embeddings
-from config import OPENAI_API_KEY, PINECONE_ANC_INDEX, PINECONE_API_KEY
+from config import OPENAI_API_KEY, PINECONE_ANC_INDEX, PINECONE_API_KEY, MODEL, MAX_CHUNKS, NUM_SUGGESTIONS
 
 router = APIRouter()
 openai.api_key = OPENAI_API_KEY
 
 class QuestionRequest(BaseModel):
     question: str = Field(..., description="The question to be answered")
-    max_chunks: int = Field(default=5, description="Maximum number of chunks to retrieve")
-    model: str = Field(default="gpt-3.5-turbo", description="The OpenAI model to use")
-    num_suggestions: int = Field(default=3, description="Number of suggested questions to generate")
 
 class Source(BaseModel):
     document_id: str
@@ -37,26 +34,26 @@ class QuestionResponse(BaseModel):
     execution_time: float
 
 def get_system_prompt() -> str:
-    return """You are an assistant analyzing provided contexts to answer questions. Always generate 3 relevant follow-up questions.
+    return f"""You are an assistant analyzing provided contexts to answer questions. Always generate {NUM_SUGGESTIONS} relevant follow-up questions.
 
 Your response MUST be a valid JSON object with EXACTLY these fields:
-{
+{{
     "answer": "Answer based on context information",
     "found": true/false,
-    "source": {
+    "source": {{
         "document_id": "ID from metadata",
         "content_type": "url" or "document",
         "upload_date": "ISO date from metadata",
         "url": "URL if content_type is url",
         "filename": "filename if content_type is document",
         "form_url": "form URL if content_type is document"
-    },
+    }},
     "suggested_questions": [
         "Specific follow-up question 1",
         "Specific follow-up question 2",
         "Specific follow-up question 3"
     ]
-}
+}}
 
 Rules:
 1. source fields depend on content_type - include ALL metadata from the chunk
@@ -106,7 +103,7 @@ async def ask_question(request: QuestionRequest):
         # Sort and take top max_chunks
         if all_matches:
             all_matches.sort(key=lambda x: x.score, reverse=True)
-            top_matches = all_matches[:request.max_chunks]
+            top_matches = all_matches[:MAX_CHUNKS]
 
         if not top_matches:
             return QuestionResponse(
@@ -114,7 +111,7 @@ async def ask_question(request: QuestionRequest):
                 answer="No relevant information found.",
                 sources=[],
                 suggested_questions=[],
-                model_used=request.model,
+                model_used=MODEL,
                 status_code="200",
                 found=False,
                 execution_time=round(time.time() - start_time, 2)
@@ -131,7 +128,7 @@ async def ask_question(request: QuestionRequest):
         source = create_source_from_metadata(top_matches[0].metadata)
         
         response = openai.ChatCompletion.create(
-            model=request.model,
+            model=MODEL,
             messages=[
                 {"role": "system", "content": get_system_prompt()},
                 {"role": "user", "content": f"Question: {request.question}\n\n{combined_context}"}
@@ -152,7 +149,7 @@ async def ask_question(request: QuestionRequest):
                 answer=gpt_response.get("answer", ""),
                 sources=[source],
                 suggested_questions=gpt_response.get("suggested_questions", []),
-                model_used=request.model,
+                model_used=MODEL,
                 status_code="200",
                 found=gpt_response.get("found", False),
                 execution_time=execution_time
@@ -165,7 +162,7 @@ async def ask_question(request: QuestionRequest):
                 answer="Error processing response.",
                 sources=[],
                 suggested_questions=[],
-                model_used=request.model,
+                model_used=MODEL,
                 status_code="500",
                 found=False,
                 execution_time=round(time.time() - start_time, 2)
