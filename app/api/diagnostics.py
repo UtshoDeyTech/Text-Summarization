@@ -13,7 +13,7 @@ from app.service.s3_storage import (
 )
 from app.service.log_client import logger
 
-router = APIRouter(prefix="/diagnostics", tags=["diagnostics"])
+router = APIRouter(prefix="/diagnostics", tags=["Diagnostics"])
 
 @router.get("/s3/detailed")
 async def diagnose_s3_detailed():
