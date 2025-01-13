@@ -3,9 +3,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import list, sync, diagnostics, upload_anc_document, document_upload, document_delete
-from app.api.question_answering.user_index import qa as qa
-from app.api.question_answering.anc_index import anc_qa as anc_qa
-from app.api.question_answering.summarization import summary
+from app.api.question_answering import qa_router
 from app.service.log_client import logger, log_api_request
 from time import time
 
@@ -48,10 +46,8 @@ app.include_router(upload_anc_document.router)
 app.include_router(document_delete.router)
 app.include_router(list.router)
 app.include_router(sync.router)
+app.include_router(qa_router.router)
 app.include_router(diagnostics.router)
-app.include_router(qa.router)
-app.include_router(anc_qa.router)
-app.include_router(summary.router)
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
