@@ -125,7 +125,6 @@ typing_extensions==4.12.2
 tzdata==2024.2
 unstructured==0.16.8
 unstructured-client==0.28.1
-urllib3==2.3.0
 uvicorn==0.15.0
 webencodings==0.5.1
 wrapt==1.17.0
