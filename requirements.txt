@@ -119,7 +119,7 @@ tinysegmenter==0.3
 tldextract==5.1.3
 tokenizers==0.21.0
 tqdm==4.66.5
-types-requests==2.32.0.20241016
+types-requests==2.31.0.20240406
 typing-inspect==0.9.0
 typing_extensions==4.12.2
 tzdata==2024.2
