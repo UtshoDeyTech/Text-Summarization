@@ -1,6 +1,12 @@
 # Use an official Python runtime as the base image
 FROM python:3.9-slim
 
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
 # Set the working directory in the container
 WORKDIR /app
 
@@ -24,23 +30,26 @@ RUN apt-get update && apt-get install -y \
     libasound2 \
     libatspi2.0-0 \
     libx11-6 \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the requirements file into the container
-COPY requirements.txt .
+# Upgrade pip and install dependencies
+RUN pip install --upgrade pip setuptools wheel
 
-# Install the required packages
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy and install requirements in two steps to handle dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir urllib3>=1.25.4,<1.27 && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright browser with dependencies
-RUN playwright install chromium
-RUN playwright install-deps
+RUN playwright install chromium && \
+    playwright install-deps
 
 # Copy the rest of the application code
 COPY . .
 
 # Verify uvicorn is installed and in PATH
-RUN echo $PATH && which uvicorn && pip list
+RUN which uvicorn && pip list
 
 # Expose the port the app will run on
 EXPOSE 8000
