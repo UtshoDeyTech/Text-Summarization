@@ -1,12 +1,11 @@
 from fastapi import APIRouter, HTTPException, File, UploadFile, Form
-from typing import Optional, List
+from typing import List
 from pydantic import BaseModel
 import tempfile
 import os
 from app.service.log_client import logger
 from langchain_experimental.agents.agent_toolkits import create_pandas_dataframe_agent
 from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
 import pandas as pd
 import time
 
@@ -82,12 +81,6 @@ async def table_qa(
                 model="gpt-3.5-turbo",
                 temperature=0
             )
-
-            # Create the chat prompt template
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", SYSTEM_PROMPT),
-                ("human", USER_PROMPT_TEMPLATE)
-            ])
 
             # Create pandas DataFrame agent
             agent = create_pandas_dataframe_agent(
