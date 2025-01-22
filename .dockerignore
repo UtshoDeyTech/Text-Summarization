@@ -1,0 +1,49 @@
+# Ignore Python cache files and directories
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore virtual environments
+venv/
+env/
+
+# Ignore local IDE and editor configuration files
+*.vscode/
+*.idea/
+*.swp
+
+# Ignore system files
+.DS_Store
+Thumbs.db
+
+# Ignore Git-related files
+.git/
+.gitignore
+
+# Ignore logs and temporary files
+*.log
+*.tmp
+*.bak
+*.~*
+
+# Ignore build-related files
+build/
+dist/
+*.egg-info/
+*.pytest_cache/
+
+# Ignore Playwright downloaded browser binaries if unnecessary
+playwright/.local-browsers/
+
+# Exclude sensitive files if present
+.env
+.env.*
+
+# Ignore unnecessary Docker files
+docker-compose.override.yml
+Dockerfile.*
+
+# Ensure `requirements.txt` and app code are included
+!requirements.txt
+!main.py  # Replace `main.py` with your actual application entry file

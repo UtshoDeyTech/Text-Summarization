@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from typing import List, Dict
 from pydantic import BaseModel, Field
-import openai
+from openai import AsyncOpenAI
 import json
 import time
 import hashlib
@@ -9,11 +9,12 @@ from datetime import datetime, timedelta
 from pinecone import Pinecone
 from functools import lru_cache
 from app.service.log_client import logger
+import asyncio
 from app.service.openai_client import get_embeddings
 from config import OPENAI_API_KEY, PINECONE_CLIENT_INDEX, PINECONE_API_KEY, MODEL, MAX_CHUNKS, NUM_SUGGESTIONS
 
 router = APIRouter()
-openai.api_key = OPENAI_API_KEY
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # Constants
 VALIDATION_DAYS = 365
@@ -79,6 +80,7 @@ class Source(BaseModel):
     filename: str
     document_id: str
     file_type: str
+    document_category: str 
     source_type: str = "client"
 
 class QuestionResponse(BaseModel):
@@ -156,12 +158,13 @@ Current Sequence: #{current_sequence} (Current question in the conversation flow
 
 Your response must be in the following JSON format:
 {{
-    "answer": "Your answer here", # The actual answer found in the context (write descriptive answer, do not provide short answer), or 'There is no relivant answer' if no answer found
+    "answer": "Your answer here", # The actual answer found in the context (write descriptive answer, do not provide short answer), or 'There is no relevant answer' if no answer found
     "found": true/false, # Boolean indicating if an answer was found
     "source": {{ # Source information for the specific chunk where the answer was found
         "filename": "filename here",
         "document_id": "id here",
         "file_type": "file type here",
+        "document_category": "document category here",
         "source_type": "client"
     }},
     "suggested_questions": [], # Array of exactly {NUM_SUGGESTIONS} related follow-up questions if answer is found
@@ -178,7 +181,8 @@ Important rules:
 6. Format numbers, dates, and currency values appropriately
 7. Generate exactly {NUM_SUGGESTIONS} relevant follow-up questions only if answer is found
 8. Make sure suggested questions are closely related to the context and original question
-9. In the summary, reference sequence numbers when connecting current answer with previous context"""
+9. In the summary, reference sequence numbers when connecting current answer with previous context
+10. Include the document_category exactly as provided in the context metadata"""
 
 @router.post("/{user_id}/ask", response_model=QuestionResponse)
 async def ask_question(user_id: str, request: QuestionRequest):
@@ -194,8 +198,9 @@ async def ask_question(user_id: str, request: QuestionRequest):
         if cached_result := get_cached_response(question_hash, user_id):
             return cached_result
 
-        # Get embeddings
-        question_embedding = get_embeddings([request.question])[0]
+        # Get embeddings asynchronously
+        embeddings = await get_embeddings([request.question])
+        question_embedding = embeddings[0] 
         
         # Initialize Pinecone
         pc = Pinecone(api_key=PINECONE_API_KEY)
@@ -247,7 +252,7 @@ async def ask_question(user_id: str, request: QuestionRequest):
         # Sort and process top matches
         sorted_matches = sorted(all_matches, key=lambda x: x.score, reverse=True)[:MAX_CHUNKS]
         
-        # Prepare contexts
+        # Prepare contexts with complete metadata
         valid_contexts = []
         for match in sorted_matches:
             metadata = match.metadata or {}
@@ -256,22 +261,40 @@ async def ask_question(user_id: str, request: QuestionRequest):
                 "filename": metadata.get("filename", ""),
                 "document_id": metadata.get("document_id", ""),
                 "file_type": metadata.get("file_type", ""),
+                "document_category": metadata.get("document_category", "Other"),
                 "source_type": "client",
                 "score": match.score
             }
             valid_contexts.append(context)
 
-        # Prepare prompt with memory context
-        system_prompt = get_system_prompt(memory_entries)
+        # Prepare contexts prompt with structured metadata
         contexts_prompt = "\n\n".join([
-            f"Context {i+1} from {ctx['filename']} (ID: {ctx['document_id']}):\n{ctx['text']}"
+            f"""Context {i+1}:
+Document Metadata:
+- Filename: {ctx['filename']}
+- Document ID: {ctx['document_id']}
+- File Type: {ctx['file_type']}
+- Document Category: {ctx['document_category']}
+- Relevance Score: {ctx['score']}
+
+Content:
+{ctx['text']}"""
             for i, ctx in enumerate(valid_contexts)
         ])
         
-        user_prompt = f"Based on these contexts and any relevant previous conversation, answer this question: {request.question}\n\nContexts:\n{contexts_prompt}"
+        # Prepare system prompt
+        system_prompt = get_system_prompt(memory_entries)
+        
+        # Prepare user prompt with explicit instructions
+        user_prompt = f"""Based on these contexts and any relevant previous conversation, answer this question: {request.question}
 
-        # Make OpenAI call
-        response = openai.ChatCompletion.create(
+Important: When providing source information, use the exact document metadata (including category) from the specific context chunk where you found the answer.
+
+Contexts:
+{contexts_prompt}"""
+
+        # Make OpenAI call with async client
+        response = await client.chat.completions.create(
             model=MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
