@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, File, UploadFile, Form
 from typing import List
 from pydantic import BaseModel
+from config import OPENAI_API_KEY
 import tempfile
 import os
 from app.service.log_client import logger

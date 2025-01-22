@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from typing import List, Dict
 from pydantic import BaseModel, Field
-import openai
+from openai import AsyncOpenAI
 import json
 import time
 import hashlib
@@ -9,11 +9,12 @@ from datetime import datetime, timedelta
 from pinecone import Pinecone
 from functools import lru_cache
 from app.service.log_client import logger
+import asyncio
 from app.service.openai_client import get_embeddings
 from config import OPENAI_API_KEY, PINECONE_CLIENT_INDEX, PINECONE_API_KEY, MODEL, MAX_CHUNKS, NUM_SUGGESTIONS
 
 router = APIRouter()
-openai.api_key = OPENAI_API_KEY
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # Constants
 VALIDATION_DAYS = 365
@@ -135,14 +136,7 @@ def create_response(user_id: str, request: QuestionRequest, answer: str,
     )
 
 def get_system_prompt(memory_entries: List[MemoryEntry] = None) -> str:
-    """Generate the system prompt with specific instructions and sequenced memory context.
-    
-    Args:
-        memory_entries: List of previous conversation entries from memory buffer
-        
-    Returns:
-        str: Formatted system prompt with memory context and instructions
-    """
+    """Generate the system prompt with specific instructions and sequenced memory context."""
     memory_context = ""
     if memory_entries:
         # Create sequenced memory entries
@@ -188,13 +182,7 @@ Important rules:
 7. Generate exactly {NUM_SUGGESTIONS} relevant follow-up questions only if answer is found
 8. Make sure suggested questions are closely related to the context and original question
 9. In the summary, reference sequence numbers when connecting current answer with previous context
-10. Include the document_category exactly as provided in the context metadata
-
-Instructions for handling document categories:
-- Always include the document_category from the source metadata in your response
-- Do not modify or interpret the category - use it exactly as provided
-- If multiple relevant chunks are found, use the category from the most relevant chunk
-- If no answer is found, leave the source object empty"""
+10. Include the document_category exactly as provided in the context metadata"""
 
 @router.post("/{user_id}/ask", response_model=QuestionResponse)
 async def ask_question(user_id: str, request: QuestionRequest):
@@ -210,8 +198,9 @@ async def ask_question(user_id: str, request: QuestionRequest):
         if cached_result := get_cached_response(question_hash, user_id):
             return cached_result
 
-        # Get embeddings
-        question_embedding = get_embeddings([request.question])[0]
+        # Get embeddings asynchronously
+        embeddings = await get_embeddings([request.question])
+        question_embedding = embeddings[0] 
         
         # Initialize Pinecone
         pc = Pinecone(api_key=PINECONE_API_KEY)
@@ -304,8 +293,8 @@ Important: When providing source information, use the exact document metadata (i
 Contexts:
 {contexts_prompt}"""
 
-        # Make OpenAI call
-        response = openai.ChatCompletion.create(
+        # Make OpenAI call with async client
+        response = await client.chat.completions.create(
             model=MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},

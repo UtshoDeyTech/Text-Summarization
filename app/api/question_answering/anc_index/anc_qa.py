@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from typing import List
 from pydantic import BaseModel, Field
-import openai
+from openai import AsyncOpenAI
 import json
 import time
 from pinecone import Pinecone
@@ -10,7 +10,7 @@ from app.service.openai_client import get_embeddings
 from config import OPENAI_API_KEY, PINECONE_ANC_INDEX, PINECONE_API_KEY, MODEL, MAX_CHUNKS, NUM_SUGGESTIONS
 
 router = APIRouter()
-openai.api_key = OPENAI_API_KEY
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 class QuestionRequest(BaseModel):
     question: str = Field(..., description="The question to be answered")
@@ -77,7 +77,10 @@ async def ask_question(request: QuestionRequest):
     logger.info(f"Processing question | question={request.question}")
     
     try:
-        question_embedding = get_embeddings([request.question])[0]
+        # Get embeddings asynchronously
+        embeddings = await get_embeddings([request.question])
+        question_embedding = embeddings[0]
+        
         pc = Pinecone(api_key=PINECONE_API_KEY)
         index = pc.Index(PINECONE_ANC_INDEX)
         
@@ -101,6 +104,7 @@ async def ask_question(request: QuestionRequest):
                 continue
         
         # Sort and take top max_chunks
+        top_matches = []
         if all_matches:
             all_matches.sort(key=lambda x: x.score, reverse=True)
             top_matches = all_matches[:MAX_CHUNKS]
@@ -127,7 +131,8 @@ async def ask_question(request: QuestionRequest):
         combined_context = "\n\n".join(contexts)
         source = create_source_from_metadata(top_matches[0].metadata)
         
-        response = openai.ChatCompletion.create(
+        # Use async OpenAI client
+        response = await client.chat.completions.create(
             model=MODEL,
             messages=[
                 {"role": "system", "content": get_system_prompt()},
