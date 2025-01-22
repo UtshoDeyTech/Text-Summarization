@@ -1,13 +1,13 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-import openai
+from openai import AsyncOpenAI
 import re
 from typing import Dict
 from bs4 import BeautifulSoup
 from config import OPENAI_API_KEY
 
 router = APIRouter()
-openai.api_key = OPENAI_API_KEY
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 class EmailContent(BaseModel):
     subject: str
@@ -65,7 +65,7 @@ def clean_html_to_text(html_content: str) -> Dict[str, str]:
         "customer_name": customer_name
     }
 
-def generate_email_content(formatted_data: Dict[str, str]) -> Dict[str, str]:
+async def generate_email_content(formatted_data: Dict[str, str]) -> str:
     """Generate email content using OpenAI"""
     system_prompt = """You are an insurance company representative. Generate a concise and professional email summary based on the policy information provided. The email should be brief but informative.
 
@@ -81,8 +81,7 @@ Requirements:
 2. All three fields (subject, body, tail) must be present
 3. The tail field must be exactly as shown above
 4. Do not include the signature in the body
-5. No additional fields or formatting
-"""
+5. No additional fields or formatting"""
 
     user_prompt = f"""Generate a policy summary email using this information:
 
@@ -103,18 +102,17 @@ Requirements:
    - Excessive details
    - Marketing language
    
-   
-**Donot add Total premium in your email.**
-   """
+**Do not add Total premium in your email.**"""
 
     try:
-        response = openai.ChatCompletion.create(
+        response = await client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0.7
+            temperature=0.7,
+            response_format={"type": "json_object"}  # Ensure JSON response
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -130,7 +128,7 @@ async def generate_email(request: EmailRequest) -> EmailContent:
         formatted_data = clean_html_to_text(request.content)
         
         # Generate email content
-        email_json = generate_email_content(formatted_data)
+        email_json = await generate_email_content(formatted_data)
         
         # Parse the JSON string response from OpenAI
         import json
@@ -142,27 +140,36 @@ async def generate_email(request: EmailRequest) -> EmailContent:
                 
             email_content = json.loads(email_json)
             
-            # Ensure all required fields are present
+            # Validate response structure
             required_fields = {'subject', 'body', 'tail'}
-            if not all(field in email_content for field in required_fields):
-                raise ValueError(f"Missing required fields. Got: {list(email_content.keys())}")
+            missing_fields = required_fields - set(email_content.keys())
+            if missing_fields:
+                raise ValueError(f"Missing required fields: {', '.join(missing_fields)}")
+            
+            # Validate field content
+            for field in required_fields:
+                if not isinstance(email_content[field], str) or not email_content[field].strip():
+                    raise ValueError(f"Field '{field}' must be a non-empty string")
             
             return EmailContent(
                 subject=email_content['subject'],
                 body=email_content['body'],
                 tail=email_content['tail']
             )
+            
         except json.JSONDecodeError as e:
             raise HTTPException(
                 status_code=500,
-                detail=f"Invalid JSON response from OpenAI: {str(e)}\nResponse: {email_json}"
+                detail=f"Invalid JSON response: {str(e)}"
             )
-        except Exception as e:
+        except ValueError as e:
             raise HTTPException(
                 status_code=500,
-                detail=f"Error processing OpenAI response: {str(e)}\nResponse: {email_json}"
+                detail=str(e)
             )
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,

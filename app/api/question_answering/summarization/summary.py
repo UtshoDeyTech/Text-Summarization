@@ -2,14 +2,14 @@ from fastapi import APIRouter, HTTPException
 from typing import List, Tuple
 from pydantic import BaseModel
 import time
-import openai
 import tiktoken
+from openai import AsyncOpenAI
 from pinecone import Pinecone
 from app.service.log_client import logger
 from config import OPENAI_API_KEY, PINECONE_CLIENT_INDEX, PINECONE_API_KEY, MODEL
 
 router = APIRouter()
-openai.api_key = OPENAI_API_KEY
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # Constants for token management
 MAX_TOKENS_PER_REQUEST = 3000
@@ -25,19 +25,6 @@ class SummaryResponse(BaseModel):
     summarization_levels: int
     execution_time: float
     status_code: str = "200"
-
-def count_tokens(text: str) -> int:
-    """Count tokens in a text string"""
-    enc = tiktoken.encoding_for_model(MODEL)
-    return len(enc.encode(text))
-
-def truncate_to_token_limit(text: str, max_tokens: int) -> str:
-    """Truncate text to fit within token limit"""
-    enc = tiktoken.encoding_for_model(MODEL)
-    tokens = enc.encode(text)
-    if len(tokens) <= max_tokens:
-        return text
-    return enc.decode(tokens[:max_tokens])
 
 def get_summary_prompt(level: int = 1, is_final: bool = False) -> str:
     """Get appropriate prompt based on level"""
@@ -65,19 +52,31 @@ Key points to extract:
 
 Format as simple text. Do not create tables yet."""
 
-def create_safe_batch_summary(chunks: List[str], level: int) -> Tuple[str, bool]:
+def count_tokens(text: str) -> int:
+    """Count tokens in a text string"""
+    enc = tiktoken.encoding_for_model(MODEL)
+    return len(enc.encode(text))
+
+def truncate_to_token_limit(text: str, max_tokens: int) -> str:
+    """Truncate text to fit within token limit"""
+    enc = tiktoken.encoding_for_model(MODEL)
+    tokens = enc.encode(text)
+    if len(tokens) <= max_tokens:
+        return text
+    return enc.decode(tokens[:max_tokens])
+
+async def create_safe_batch_summary(chunks: List[str], level: int) -> Tuple[str, bool]:
     """Create a summary for a batch with token limit handling"""
-    combined_text = "\n\n".join([f"Chunk {i+1}:\n{chunk}" for i, chunk in enumerate(chunks)])
-    total_tokens = count_tokens(combined_text)
     
-    if total_tokens > MAX_TOKENS_PER_REQUEST:
-        logger.warning(f"Batch too large ({total_tokens} tokens), truncating chunks")
-        max_tokens_per_chunk = (MAX_TOKENS_PER_REQUEST - TOKEN_BUFFER) // len(chunks)
-        truncated_chunks = [truncate_to_token_limit(chunk, max_tokens_per_chunk) for chunk in chunks]
-        combined_text = "\n\n".join([f"Chunk {i+1}:\n{chunk}" for i, chunk in enumerate(truncated_chunks)])
+    # Calculate maximum tokens per chunk
+    max_tokens_per_chunk = (MAX_TOKENS_PER_REQUEST - TOKEN_BUFFER) // len(chunks)
+    truncated_chunks = [truncate_to_token_limit(chunk, max_tokens_per_chunk) for chunk in chunks]
+    
+    # Join chunks with clear separation
+    combined_text = "\n\n".join([f"Chunk {i+1}:\n{chunk}" for i, chunk in enumerate(truncated_chunks)])
     
     try:
-        response = openai.ChatCompletion.create(
+        response = await client.chat.completions.create(
             model=MODEL,
             messages=[
                 {"role": "system", "content": get_summary_prompt(level)},
@@ -91,7 +90,7 @@ def create_safe_batch_summary(chunks: List[str], level: int) -> Tuple[str, bool]
         logger.error(f"Error in batch summary: {str(e)}")
         return "", False
 
-def process_chunks_hierarchically(chunks: List[str]) -> Tuple[str, int, int]:
+async def process_chunks_hierarchically(chunks: List[str]) -> Tuple[str, int, int]:
     """Process chunks with multiple levels of summarization if needed"""
     current_chunks = chunks
     level = 1
@@ -106,13 +105,13 @@ def process_chunks_hierarchically(chunks: List[str]) -> Tuple[str, int, int]:
             batch = current_chunks[i:i + BATCH_SIZE]
             batch_count += 1
             
-            summary, success = create_safe_batch_summary(batch, level)
+            summary, success = await create_safe_batch_summary(batch, level)
             if not success:
                 raise HTTPException(
                     status_code=500,
                     detail={
                         "status_code": "500",
-                        "error_messages": ["Failed to process batch due to token limits"]
+                        "error_messages": ["Failed to process batch"]
                     }
                 )
             next_level_chunks.append(summary)
@@ -126,7 +125,7 @@ def process_chunks_hierarchically(chunks: List[str]) -> Tuple[str, int, int]:
     
     # Final step: Convert to HTML table
     try:
-        final_summary = openai.ChatCompletion.create(
+        final_response = await client.chat.completions.create(
             model=MODEL,
             messages=[
                 {"role": "system", "content": get_summary_prompt(is_final=True)},
@@ -134,7 +133,8 @@ def process_chunks_hierarchically(chunks: List[str]) -> Tuple[str, int, int]:
             ],
             temperature=0.7,
             max_tokens=1000  # Strict limit for final table generation
-        ).choices[0].message.content
+        )
+        final_summary = final_response.choices[0].message.content
     except Exception as e:
         logger.error(f"Error in final HTML formatting: {str(e)}")
         raise HTTPException(
@@ -194,7 +194,7 @@ async def summarize(user_id: str, vector_id: str):
         
         # Process chunks hierarchically
         logger.info(f"Processing {len(chunks)} chunks from policy namespace {namespace}")
-        final_summary, batches_processed, levels = process_chunks_hierarchically(chunks)
+        final_summary, batches_processed, levels = await process_chunks_hierarchically(chunks)
         execution_time = round(time.time() - start_time, 2)
         
         return SummaryResponse(
