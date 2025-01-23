@@ -167,13 +167,11 @@ async def document_upload(
                 }
             )
 
-        # Check if document exists in Pinecone and delete if it does
         namespace = find_document_namespace(document_id)
         if namespace:
             delete_vectors(document_id)
             logger.info(f"Deleted existing vectors from Pinecone | document_id={document_id}")
 
-        # Process document content
         file_content = await file.read()
         chunks = process_document(BytesIO(file_content), file_extension)
         if len(chunks) == 0:
@@ -185,12 +183,10 @@ async def document_upload(
                 }
             )
         
-        # Create embeddings
         with tqdm(total=len(chunks), desc="Creating embeddings") as pbar:
-            embeddings = get_embeddings(chunks)
+            embeddings = await get_embeddings(chunks)  # Added await here
             pbar.update(len(chunks))
 
-        # Prepare metadata
         ids = []
         metadatas = []
         valid_chunks = []
@@ -216,7 +212,6 @@ async def document_upload(
                 valid_chunks.append(chunk)
                 valid_embeddings.append(embedding)
 
-        # Upload to Pinecone
         with tqdm(total=1, desc="Uploading to Pinecone") as pbar:
             upsert_vectors(valid_embeddings, metadatas, ids, document_id)
             pbar.update(1)

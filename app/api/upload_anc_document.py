@@ -131,7 +131,7 @@ async def upload_anc_global_url(url: str):
 
         logger.info(f"Processing URL | url={url}")
         chunks = await extract_text_with_playwright(url)
-        embeddings = get_embeddings(chunks)
+        embeddings = await get_embeddings(chunks)  # Added await
         
         document_id = urlparse(url).netloc
         ids = [f"{document_id}_{i}" for i in range(len(chunks))]
@@ -187,7 +187,6 @@ async def upload_anc_global_document(
                 }
             )
 
-        # Validate form_url if provided
         if form_url and not is_valid_url(form_url):
             raise HTTPException(
                 status_code=400,
@@ -209,7 +208,7 @@ async def upload_anc_global_document(
         if not chunks:
             raise ValueError("No valid text content extracted from document")
 
-        embeddings = get_embeddings(chunks)
+        embeddings = await get_embeddings(chunks)  # Added await
         
         ids = [f"{document_id}_{i}" for i in range(len(chunks))]
         metadatas = [
