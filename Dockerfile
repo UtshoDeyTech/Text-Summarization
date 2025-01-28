@@ -1,11 +1,13 @@
-# Use an official Python runtime as the base image
-FROM python:3.9-slim
+# Stage 1: Build stage
+FROM python:3.9-slim AS builder
 
-# Set the working directory in the container
+# Set the working directory
 WORKDIR /app
 
-# Install system dependencies for Playwright
+# Install system dependencies for Playwright and Chromium
 RUN apt-get update && apt-get install -y \
+    wget \
+    unzip \
     libglib2.0-0 \
     libnss3 \
     libnspr4 \
@@ -26,20 +28,38 @@ RUN apt-get update && apt-get install -y \
     libx11-6 \
     && rm -rf /var/lib/apt/lists/*
 
+# Download and install the headless Chromium shell
+RUN wget -q -O chromium-headless-shell.zip https://playwright.azureedge.net/builds/chromium/1148/chromium-headless-shell-linux.zip && \
+    unzip chromium-headless-shell.zip -d /opt/chromium-headless-shell && \
+    rm chromium-headless-shell.zip && \
+    ln -s /opt/chromium-headless-shell/chromium-headless-shell /usr/bin/chromium
+
 # Copy the requirements file into the container
 COPY requirements.txt .
 
-RUN pip install --upgrade pip
-
-# Install the required packages
-RUN pip install --no-cache-dir --use-deprecated=legacy-resolver -r requirements.txt
-
-# Install Playwright browser with dependencies
-RUN playwright install chromium
-RUN playwright install-deps
+# Upgrade pip and install Python dependencies
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir --use-deprecated=legacy-resolver -r requirements.txt
 
 # Copy the rest of the application code
 COPY . .
+
+# Stage 2: Final stage
+FROM python:3.9-slim
+
+# Set the working directory
+WORKDIR /app
+
+# Copy only the necessary files from the builder stage
+COPY --from=builder /app /app
+COPY --from=builder /opt/chromium-headless-shell /opt/chromium-headless-shell
+
+# Recreate the symbolic link in the final stage
+RUN ln -s /opt/chromium-headless-shell/chromium-headless-shell /usr/bin/chromium
+
+# Copy the Python packages from the builder stage
+COPY --from=builder /usr/local/lib/python3.9/site-packages /usr/local/lib/python3.9/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Verify uvicorn is installed and in PATH
 RUN echo $PATH && which uvicorn && pip list
