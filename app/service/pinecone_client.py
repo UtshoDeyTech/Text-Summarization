@@ -163,21 +163,32 @@ def find_document_namespace(document_id: str) -> str:
         return None
 
 def upsert_vectors(vectors, metadatas, ids, document_id: str):
-    """Upsert vectors with metadata into Pinecone."""
+    """Upsert vectors with metadata into Pinecone using batching."""
     try:
-        namespace = document_id  # Using document_id as namespace
+        namespace = document_id
         logger.info(f"Upserting vectors | namespace={namespace}, vector_count={len(vectors)}")
         
-        for metadata in metadatas:
-            metadata['upload_date'] = metadata.get('upload_date', datetime.utcnow().isoformat())
-            metadata['namespace'] = namespace
-                
-        index = initialize_pinecone()
-        index.upsert(
-            vectors=list(zip(ids, vectors, metadatas)),
-            namespace=namespace
-        )
-        logger.info(f"Vector upsert successful | namespace={namespace}, vector_count={len(vectors)}")
+        # Process in batches of 100 vectors
+        batch_size = 100
+        for i in range(0, len(vectors), batch_size):
+            batch_end = min(i + batch_size, len(vectors))
+            batch_vectors = vectors[i:batch_end]
+            batch_metadatas = metadatas[i:batch_end]
+            batch_ids = ids[i:batch_end]
+            
+            # Update metadata for batch
+            for metadata in batch_metadatas:
+                metadata['upload_date'] = metadata.get('upload_date', datetime.utcnow().isoformat())
+                metadata['namespace'] = namespace
+            
+            index = initialize_pinecone()
+            index.upsert(
+                vectors=list(zip(batch_ids, batch_vectors, batch_metadatas)),
+                namespace=namespace
+            )
+            logger.info(f"Batch upsert successful | batch_size={len(batch_vectors)}, total_progress={batch_end}/{len(vectors)}")
+            
+        logger.info(f"All vectors upserted successfully | namespace={namespace}, total_vectors={len(vectors)}")
     except Exception as e:
         logger.error(f"Vector upsert failed | namespace={namespace}, vector_count={len(vectors)}, error={str(e)}")
         raise
