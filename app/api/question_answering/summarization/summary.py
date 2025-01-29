@@ -6,10 +6,12 @@ import tiktoken
 from openai import AsyncOpenAI
 import PyPDF2
 import io
+from docx import Document
 from app.service.log_client import logger
 from config import OPENAI_API_KEY, MODEL, S3_BUCKET_NAME
 from app.service import s3_storage
 from pydantic import validator
+from enum import Enum
 
 router = APIRouter()
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
@@ -21,10 +23,15 @@ BATCH_SIZE = 5
 TOKEN_BUFFER = 100
 MAX_PAGES = 10
 
+class DocumentType(str, Enum):
+    PDF = "pdf"
+    DOC = "doc"
+    DOCX = "docx"
+
 class S3URLInput(BaseModel):
     """Model for S3 URL input"""
     url: str = Field(
-        description="S3 URL of the PDF file to process"
+        description="S3 URL of the document file to process"
     )
     
     @validator('url')
@@ -33,11 +40,20 @@ class S3URLInput(BaseModel):
         if not v.startswith(f"https://{S3_BUCKET_NAME}.s3."):
             raise ValueError("Invalid S3 URL format")
         
-        # Check if it ends with .pdf (case insensitive)
-        if not v.lower().endswith('.pdf'):
-            raise ValueError("URL must point to a PDF file")
+        # Check if it ends with supported file extension
+        lower_url = v.lower()
+        if not any(lower_url.endswith(f".{ext}") for ext in [e.value for e in DocumentType]):
+            raise ValueError("URL must point to a PDF, DOC, or DOCX file")
             
         return v
+
+    def get_document_type(self) -> DocumentType:
+        """Get the document type from the URL"""
+        lower_url = self.url.lower()
+        for doc_type in DocumentType:
+            if lower_url.endswith(f".{doc_type.value}"):
+                return doc_type
+        raise ValueError("Unsupported document type")
 
 class TokenUsage(BaseModel):
     """Model for tracking token usage in API requests"""
@@ -46,14 +62,15 @@ class TokenUsage(BaseModel):
     total_tokens: int = Field(description="Total number of tokens used", ge=0)
 
 class SummaryResponse(BaseModel):
-    """Model for PDF summary response"""
-    summary: str = Field(description="Generated HTML table summary of the PDF content")
-    total_pages: int = Field(description="Total number of pages in the original PDF", ge=0)
+    """Model for document summary response"""
+    summary: str = Field(description="Generated HTML table summary of the document content")
+    total_pages: int = Field(description="Total number of pages in the original document", ge=0)
     pages_processed: int = Field(description="Number of pages that were actually processed", ge=0)
     batches_processed: int = Field(description="Number of batches processed during summarization", ge=0)
     summarization_levels: int = Field(description="Number of hierarchical summarization levels used", ge=1, le=3)
     execution_time: float = Field(description="Total execution time in seconds", ge=0)
     token_usage: TokenUsage = Field(description="Token usage statistics for the API calls")
+    document_type: DocumentType = Field(description="Type of document processed")
     status_code: str = Field(default="200", description="HTTP status code of the response")
 
 class ErrorDetail(BaseModel):
@@ -68,19 +85,19 @@ class BatchSummaryResult(BaseModel):
     success: bool = Field(description="Whether the batch processing was successful")
     token_usage: TokenUsage = Field(description="Token usage for this batch")
 
-# Helper functions remain the same
+
 def get_summary_prompt(level: int = 1, is_final: bool = False) -> str:
     """Get appropriate prompt based on level"""
     if is_final:
-        return """Convert the policy information into a structured HTML table following these strict rules:
+        return """Convert the document information into a structured HTML table following these strict rules:
 
 1. Table Structure:
-   - Start with Policy Information section (policyholder details, policy numbers, dates)
-   - Follow with Coverage Details section (coverage types, limits, terms)
-   - End with Additional Information section (general terms, conditions)
+   - Start with Document Information section (key details, dates, reference numbers)
+   - Follow with Content Details section (main points, terms)
+   - End with Additional Information section (notes, conditions)
    
 2. Format as a clean single-line HTML table:
-<table><tr><th>Field</th><th>Details</th></tr><tr><th colspan="2">Policy Information</th></tr><tr><td>Field</td><td>Value</td></tr></table>
+<table><tr><th>Field</th><th>Details</th></tr><tr><th colspan="2">Document Information</th></tr><tr><td>Field</td><td>Value</td></tr></table>
 
 Important rules:
 - Only include verified information with actual values
@@ -92,9 +109,9 @@ Important rules:
 - No line breaks (<br>) within cells
 - No CSS or styling"""
     else:
-        return f"""Extract key policy information from Level {level} content. Focus on:
-1. Core policy details (numbers, dates, policyholder info)
-2. Coverage information
+        return f"""Extract key information from Level {level} content. Focus on:
+1. Core document details (reference numbers, dates, entity information)
+2. Main content points
 3. Important terms and conditions
 
 Format as simple text with clear labels. Keep only verified information."""
@@ -123,7 +140,7 @@ async def create_safe_batch_summary(chunks: List[str], level: int) -> BatchSumma
             model=MODEL,
             messages=[
                 {"role": "system", "content": get_summary_prompt(level)},
-                {"role": "user", "content": f"Extract and organize the key information from these policy sections:\n\n{combined_text}"}
+                {"role": "user", "content": f"Extract and organize the key information from these document sections:\n\n{combined_text}"}
             ],
             temperature=0.7,
             max_tokens=MAX_OUTPUT_TOKENS
@@ -191,7 +208,7 @@ async def process_chunks_hierarchically(chunks: List[str]) -> Tuple[str, int, in
             model=MODEL,
             messages=[
                 {"role": "system", "content": get_summary_prompt(is_final=True)},
-                {"role": "user", "content": "Convert this policy information into an HTML table format:\n\n" + "\n\n".join(current_chunks)}
+                {"role": "user", "content": "Convert this document information into an HTML table format:\n\n" + "\n\n".join(current_chunks)}
             ],
             temperature=0.7,
             max_tokens=1000
@@ -214,23 +231,18 @@ async def process_chunks_hierarchically(chunks: List[str]) -> Tuple[str, int, in
     
     return final_summary, batch_count, level, total_token_usage
 
-async def get_pdf_from_s3(url: str) -> bytes:
-    """Fetch PDF from S3 using the provided URL"""
+async def get_document_from_s3(url: str) -> bytes:
+    """Fetch document from S3 using the provided URL"""
     try:
-        # Parse the URL to get the object key
-        # Example URL: https://python-api-ai-dev.s3.us-east-1.amazonaws.com/169/Policy/2Y236487- Policy Travlers - Panchal Investments Inc..pdf
         from urllib.parse import unquote
         
-        # Remove the base S3 URL and get the path
         base_url = f"https://{S3_BUCKET_NAME}.s3.us-east-1.amazonaws.com/"
         if base_url not in url:
             raise ValueError("Invalid S3 URL format")
             
-        # Get the object key and decode URL encoding
         object_key = unquote(url.replace(base_url, ""))
         logger.info(f"Extracted object key: {object_key}")
         
-        # Verify bucket exists and is accessible
         if not s3_storage.verify_bucket(S3_BUCKET_NAME):
             raise HTTPException(
                 status_code=404,
@@ -240,10 +252,9 @@ async def get_pdf_from_s3(url: str) -> bytes:
                 ).dict()
             )
         
-        # Get object from S3
         response = s3_storage.s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=object_key)
-        pdf_content = response['Body'].read()
-        return pdf_content
+        document_content = response['Body'].read()
+        return document_content
         
     except ValueError as e:
         logger.error(f"URL format error: {str(e)}")
@@ -255,35 +266,26 @@ async def get_pdf_from_s3(url: str) -> bytes:
             ).dict()
         )
     except s3_storage.ClientError as e:
-        logger.error(f"Error getting object from S3: {str(e)}")
+        logger.error(f"S3 client error: {str(e)}")
         raise HTTPException(
             status_code=404,
             detail=ErrorDetail(
                 status_code="404",
-                error_messages=["PDF file not found in S3"]
+                error_messages=[f"S3 error: {str(e)}"]
             ).dict()
         )
     except Exception as e:
-        logger.error(f"Unexpected error in get_pdf_from_s3: {str(e)}")
+        logger.error(f"Error fetching document from S3: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=ErrorDetail(
                 status_code="500",
-                error_messages=["Failed to fetch PDF from S3"]
-            ).dict()
-        )
-    except Exception as e:
-        logger.error(f"Error fetching PDF from S3: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=ErrorDetail(
-                status_code="500",
-                error_messages=["Failed to fetch PDF from S3"]
+                error_messages=[f"Failed to fetch document from S3: {str(e)}"]
             ).dict()
         )
 
 def extract_text_from_pdf(pdf_file: bytes) -> Tuple[List[str], int]:
-    """Extract text from PDF file and return chunks of text along with total pages"""
+    """Extract text from PDF file"""
     try:
         pdf_reader = PyPDF2.PdfReader(io.BytesIO(pdf_file))
         total_pages = len(pdf_reader.pages)
@@ -307,27 +309,82 @@ def extract_text_from_pdf(pdf_file: bytes) -> Tuple[List[str], int]:
             ).dict()
         )
 
-@router.post("/summarize/pdf", response_model=SummaryResponse)
-async def summarize_pdf(input_data: S3URLInput) -> SummaryResponse:
-    """Endpoint to process and summarize PDF content from S3"""
+def extract_text_from_docx(doc_file: bytes) -> Tuple[List[str], int]:
+    """Extract text from DOCX file"""
+    try:
+        doc = Document(io.BytesIO(doc_file))
+        total_pages = len(doc.paragraphs) // 40  # Approximate pages based on paragraphs
+        
+        # Combine paragraphs into chunks
+        chunks = []
+        current_chunk = []
+        current_length = 0
+        
+        for paragraph in doc.paragraphs:
+            text = paragraph.text.strip()
+            if not text:
+                continue
+                
+            current_chunk.append(text)
+            current_length += len(text)
+            
+            # Create new chunk when current one gets too large
+            if current_length > 2000:  # Arbitrary chunk size
+                chunks.append("\n".join(current_chunk))
+                current_chunk = []
+                current_length = 0
+        
+        # Add remaining paragraphs
+        if current_chunk:
+            chunks.append("\n".join(current_chunk))
+        
+        return chunks, max(1, total_pages)  # Ensure at least 1 page
+    except Exception as e:
+        logger.error(f"Error processing DOCX: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorDetail(
+                status_code="400",
+                error_messages=["Failed to process DOCX file"]
+            ).dict()
+        )
+
+@router.post("/summarize/document", response_model=SummaryResponse)
+async def summarize_document(input_data: S3URLInput) -> SummaryResponse:
+    """Endpoint to process and summarize document content from S3"""
     start_time = time.time()
     
     try:
-        # Fetch PDF from S3
-        pdf_content = await get_pdf_from_s3(input_data.url)
-        chunks, total_pages = extract_text_from_pdf(pdf_content)
+        # Get document type and content
+        document_type = input_data.get_document_type()
+        document_content = await get_document_from_s3(input_data.url)
+        
+        # Extract text based on document type
+        if document_type == DocumentType.PDF:
+            chunks, total_pages = extract_text_from_pdf(document_content)
+        elif document_type in [DocumentType.DOC, DocumentType.DOCX]:
+            chunks, total_pages = extract_text_from_docx(document_content)
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=ErrorDetail(
+                    status_code="400",
+                    error_messages=["Unsupported document type"]
+                ).dict()
+            )
         
         if not chunks:
             raise HTTPException(
                 status_code=400,
                 detail=ErrorDetail(
                     status_code="400",
-                    error_messages=["No readable text found in PDF"]
+                    error_messages=["No readable text found in document"]
                 ).dict()
             )
         
-        logger.info(f"Processing {len(chunks)} chunks from PDF")
+        logger.info(f"Processing {len(chunks)} chunks from {document_type.value} document")
         final_summary, batches_processed, levels, token_usage = await process_chunks_hierarchically(chunks)
+        
         execution_time = round(time.time() - start_time, 2)
         
         return SummaryResponse(
@@ -337,11 +394,17 @@ async def summarize_pdf(input_data: S3URLInput) -> SummaryResponse:
             batches_processed=batches_processed,
             summarization_levels=levels,
             execution_time=execution_time,
-            token_usage=token_usage
+            token_usage=token_usage,
+            document_type=document_type,
+            status_code="200"
         )
         
+    except HTTPException as e:
+        # Re-raise HTTP exceptions as they already have the correct format
+        raise
+        
     except Exception as e:
-        error_msg = f"Error generating PDF summary | error={str(e)}"
+        error_msg = f"Error generating document summary: {str(e)}"
         logger.error(error_msg)
         raise HTTPException(
             status_code=500,
