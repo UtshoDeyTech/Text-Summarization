@@ -14,6 +14,8 @@ spec:
       annotations:
         linkerd.io/inject: enabled
     spec:
+      nodeSelector:
+            role: worker
       containers:
         - name: askken-python-dev-api
           image: ${ECR_REPOSITORY}/${ASKKEN_PYTHON_DEV_IMAGE_NAME}:BUILD_NUMBER_PLACEHOLDER
