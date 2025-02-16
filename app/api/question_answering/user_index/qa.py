@@ -5,11 +5,10 @@ from openai import AsyncOpenAI
 import json
 import time
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime
 from pinecone import Pinecone
 from functools import lru_cache
 from app.service.log_client import logger
-import asyncio
 from app.service.openai_client import get_embeddings
 from config import OPENAI_API_KEY, PINECONE_CLIENT_INDEX, PINECONE_API_KEY, MODEL, MAX_CHUNKS, NUM_SUGGESTIONS
 
@@ -17,7 +16,6 @@ router = APIRouter()
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # Constants
-VALIDATION_DAYS = 365
 DEFAULT_MAX_CHUNKS = 5
 DEFAULT_SUGGESTIONS = 3
 DEFAULT_MODEL = "gpt-3.5-turbo"
@@ -109,14 +107,6 @@ def cache_response(question_hash: str, user_id: str, response: QuestionResponse)
     """Cache a response for future use."""
     get_cached_response.cache_clear()  # Clear old cache entries
     get_cached_response.cache_info()   # Log cache info
-
-def validate_days(days: int) -> int:
-    """Validate and return the number of days."""
-    try:
-        days_int = int(days)
-        return days_int if days_int > 0 else VALIDATION_DAYS
-    except (TypeError, ValueError):
-        return VALIDATION_DAYS
 
 def create_response(user_id: str, request: QuestionRequest, answer: str, 
                    sources: List[Source], suggested_questions: List[str], 
@@ -216,8 +206,6 @@ async def ask_question(user_id: str, request: QuestionRequest):
 
         # Get matches from all valid namespaces
         all_matches = []
-        current_date = datetime.utcnow()
-        twelve_months_ago = current_date - timedelta(days=VALIDATION_DAYS)
         
         for namespace in client_namespaces:
             # Query each namespace
@@ -236,12 +224,6 @@ async def ask_question(user_id: str, request: QuestionRequest):
                 metadata = match.metadata or {}
                 if not metadata.get("text", "").strip():
                     continue
-                    
-                # Check date if available
-                if "upload_date" in metadata:
-                    upload_date = datetime.fromisoformat(metadata["upload_date"])
-                    if upload_date < twelve_months_ago:
-                        continue
                 
                 all_matches.append(match)
 
