@@ -30,6 +30,8 @@ AI_VALUE_ASP=os.environ.get("AI_VALUE_ASP")
 
 VALIDATION_DAYS=os.environ.get("VALIDATION_DAYS")
 
+LLAMA_URL=os.environ.get("LLAMA_URL")
+
 MAX_CHUNKS = 5
 MODEL = "gpt-3.5-turbo"
 NUM_SUGGESTIONS = 3
