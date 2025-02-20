@@ -1,16 +1,44 @@
-from fastapi import APIRouter, HTTPException, File, UploadFile, Form
+from fastapi import APIRouter, HTTPException
 from typing import List
-from pydantic import BaseModel
-from config import OPENAI_API_KEY
-import tempfile
-import os
+from pydantic import BaseModel, Field, validator
+from config import S3_BUCKET_NAME
 from app.service.log_client import logger
+from app.service import s3_storage
 from langchain_experimental.agents.agent_toolkits import create_pandas_dataframe_agent
 from langchain_openai import ChatOpenAI
 import pandas as pd
 import time
+from enum import Enum
+import io
+from urllib.parse import unquote
 
 router = APIRouter()
+
+class FileType(str, Enum):
+    CSV = "csv"
+    XLSX = "xlsx"
+    XLS = "xls"
+
+class S3URLInput(BaseModel):
+    url: str = Field(description="S3 URL of the CSV or Excel file to process")
+    question: str = Field(description="Question to be answered about the data")
+    
+    @validator('url')
+    def validate_s3_url(cls, v):
+        if not v.startswith(f"https://{S3_BUCKET_NAME}.s3."):
+            raise ValueError("Invalid S3 URL format")
+        
+        lower_url = v.lower()
+        if not any(lower_url.endswith(f".{ext}") for ext in [e.value for e in FileType]):
+            raise ValueError("URL must point to a CSV or Excel file")
+        return v
+
+    def get_file_type(self) -> FileType:
+        lower_url = self.url.lower()
+        for file_type in FileType:
+            if lower_url.endswith(f".{file_type.value}"):
+                return file_type
+        raise ValueError("Unsupported file type")
 
 class TableQAResponse(BaseModel):
     question: str
@@ -22,7 +50,7 @@ class TableQAResponse(BaseModel):
     found: bool = True
     execution_time: float = 0
 
-# Define system and user prompts
+# System and user prompts remain the same
 SYSTEM_PROMPT = """You are an expert data analyst assistant. When answering questions:
 - Provide direct, concise answers that focus exactly on what was asked
 - Use natural, conversational language
@@ -49,39 +77,70 @@ SUGGESTED_QUESTIONS:
 2. [Second follow-up question - must be different from the current question]
 3. [Third follow-up question - must be different from the current question]"""
 
+async def get_file_from_s3(url: str) -> bytes:
+    try:
+        base_url = f"https://{S3_BUCKET_NAME}.s3.us-east-1.amazonaws.com/"
+        if base_url not in url:
+            raise ValueError("Invalid S3 URL format")
+            
+        object_key = unquote(url.replace(base_url, ""))
+        logger.info(f"Extracted object key: {object_key}")
+        
+        if not s3_storage.verify_bucket(S3_BUCKET_NAME):
+            raise HTTPException(
+                status_code=404,
+                detail="S3 bucket not accessible"
+            )
+        
+        response = s3_storage.s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=object_key)
+        return response['Body'].read()
+        
+    except Exception as e:
+        logger.error(f"Error fetching from S3: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch from S3: {str(e)}"
+        )
+
 @router.post("/table_qa", response_model=TableQAResponse)
-async def table_qa(
-    file: UploadFile = File(...),
-    question: str = Form(...)
-):
+async def table_qa(input_data: S3URLInput):
     start_time = time.time()
     
     try:
-        # Check file extension
-        if not file.filename.endswith(('.csv', '.xlsx', '.xls')):
-            raise HTTPException(
-                status_code=400, 
-                detail="File must be a CSV or Excel file"
-            )
-
-        # Create a temporary file to store the uploaded content
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp_file:
-            content = await file.read()
-            temp_file.write(content)
-            temp_file_path = temp_file.name
-
+        # Get file type and content from S3
+        file_type = input_data.get_file_type()
+        file_content = await get_file_from_s3(input_data.url)
+        
         try:
-            # Read the file into a pandas DataFrame
-            if file.filename.endswith('.csv'):
-                df = pd.read_csv(temp_file_path)
-            else:
-                df = pd.read_excel(temp_file_path)
+            # Read the file into a pandas DataFrame with error handling
+            try:
+                if file_type == FileType.CSV:
+                    df = pd.read_csv(io.BytesIO(file_content))
+                else:  # XLSX or XLS
+                    df = pd.read_excel(io.BytesIO(file_content))
+                
+                if df.empty:
+                    raise ValueError("The file appears to be empty")
+                    
+            except Exception as e:
+                logger.error(f"Error reading file: {str(e)}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unable to read file content: {str(e)}"
+                )
 
-            # Initialize ChatOpenAI
-            llm = ChatOpenAI(
-                model="gpt-3.5-turbo",
-                temperature=0
-            )
+            # Initialize ChatOpenAI with error handling
+            try:
+                llm = ChatOpenAI(
+                    model="gpt-3.5-turbo",
+                    temperature=0
+                )
+            except Exception as e:
+                logger.error(f"Error initializing LLM: {str(e)}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to initialize AI model: {str(e)}"
+                )
 
             # Create pandas DataFrame agent
             agent = create_pandas_dataframe_agent(
@@ -97,51 +156,51 @@ async def table_qa(
                 prefix=SYSTEM_PROMPT
             )
             
-            # Store original question for response
-            original_question = question.strip()
-            
-            # Format the user question using the template
+            # Store original question and format it
+            original_question = input_data.question.strip()
             formatted_question = USER_PROMPT_TEMPLATE.format(question=original_question)
             
-            # Get response from agent using invoke
+            # Get response from agent
             response = agent.invoke({"input": formatted_question})
             raw_output = response.get("output", "")
 
-            # Parse the response to extract answer and suggested questions
+            # Parse the response
             answer_parts = raw_output.split("SUGGESTED_QUESTIONS:")
             main_answer = answer_parts[0].replace("ANSWER:", "").strip()
             suggested_questions = []
             
             if len(answer_parts) > 1:
-                # Extract questions from numbered list
                 questions_text = answer_parts[1].strip()
                 for line in questions_text.split("\n"):
                     if line.strip() and any(line.strip().startswith(str(i)) for i in range(1, 4)):
                         question = line.strip().split(".", 1)[1].strip()
                         suggested_questions.append(question)
 
-            execution_time = time.time() - start_time
-
             return TableQAResponse(
                 question=original_question,
                 answer=main_answer,
-                sources=[file.filename],
+                sources=[input_data.url],
                 suggested_questions=suggested_questions,
                 model_used="GPT-3.5-turbo",
                 status_code="200",
                 found=True,
-                execution_time=round(execution_time, 2)
+                execution_time=round(time.time() - start_time, 2)
             )
 
-        finally:
-            # Clean up temporary file
-            os.unlink(temp_file_path)
+        except Exception as e:
+            logger.error(f"Error processing file: {str(e)}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error processing file: {str(e)}"
+            )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in table_qa: {str(e)}")
         execution_time = time.time() - start_time
         return TableQAResponse(
-            question=question,
+            question=input_data.question,
             answer="",
             sources=[],
             suggested_questions=[],
