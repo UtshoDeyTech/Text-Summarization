@@ -74,3 +74,4 @@ tiktoken
 uvicorn
 seqlog
 langchain-ollama
+tabulate>=0.8.9
