@@ -21,10 +21,7 @@ text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=10
 
 SUPPORTED_EXTENSIONS = {
     'pdf': 'application/pdf',
-    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'csv': 'text/csv',
-    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'xls': 'application/vnd.ms-excel'
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 }
 
 def truncate_text_for_metadata(text: str, max_bytes: int = 35000) -> str:
@@ -59,59 +56,6 @@ def extract_text_from_docx(file_obj):
     
     return text
 
-def extract_text_from_csv(file_obj, chunk_size=1000):
-    try:
-        text_chunks = []
-        total_rows = sum(1 for _ in pd.read_csv(file_obj, chunksize=chunk_size))
-        file_obj.seek(0)
-        
-        with tqdm(total=total_rows, desc="Processing CSV rows") as pbar:
-            for chunk in pd.read_csv(file_obj, chunksize=chunk_size):
-                chunk = chunk.astype(str).apply(lambda x: x.str[:200])
-                chunk_text = chunk.fillna('').to_string(index=False)
-                text_chunks.append(chunk_text)
-                pbar.update(len(chunk))
-                
-        return '\n'.join(text_chunks)
-    except Exception as e:
-        logger.error(f"Error extracting text from CSV: {e}")
-        raise
-
-def extract_text_from_excel(file_obj):
-    try:
-        text_chunks = []
-        
-        xl = pd.ExcelFile(file_obj)
-        sheet_names = xl.sheet_names
-        logger.info(f"Found {len(sheet_names)} sheets in Excel file")
-        
-        for sheet_name in sheet_names:
-            logger.info(f"Processing sheet: {sheet_name}")
-            text_chunks.append(f"\n=== Sheet: {sheet_name} ===\n")
-            
-            df = pd.read_excel(xl, sheet_name=sheet_name)
-            total_rows = len(df)
-            logger.info(f"Sheet {sheet_name} has {total_rows} rows")
-            
-            chunk_size = 50
-            for start_idx in range(0, total_rows, chunk_size):
-                end_idx = min(start_idx + chunk_size, total_rows)
-                
-                chunk_df = df.iloc[start_idx:end_idx].copy()
-                chunk_df = chunk_df.astype(str).apply(lambda x: x.str[:200])
-                chunk_text = chunk_df.fillna('').to_string(index=False)
-                
-                chunk_text = truncate_text_for_metadata(chunk_text)
-                if chunk_text:
-                    text_chunks.append(chunk_text)
-                
-                logger.info(f"Processed rows {start_idx} to {end_idx} in sheet {sheet_name}")
-            
-        return text_chunks
-    except Exception as e:
-        logger.error(f"Error extracting text from Excel: {str(e)}")
-        raise
-
 def process_document(file_obj, file_extension):
     try:
         logger.info(f"Starting text extraction | file_type={file_extension}")
@@ -122,11 +66,6 @@ def process_document(file_obj, file_extension):
         elif file_extension == 'docx':
             text = extract_text_from_docx(file_obj)
             chunks = text_splitter.split_text(text)
-        elif file_extension == 'csv':
-            text = extract_text_from_csv(file_obj)
-            chunks = text_splitter.split_text(text)
-        elif file_extension in ['xlsx', 'xls']:
-            chunks = extract_text_from_excel(file_obj)
         else:
             raise ValueError(f"Unsupported file type: {file_extension}")
 
