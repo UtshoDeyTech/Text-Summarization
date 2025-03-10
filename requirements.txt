@@ -36,7 +36,7 @@ langchain-experimental
 langchain-openai
 openai
 pandas
-pinecone-client
+pinecone
 playwright
 pydantic
 PyPDF2
