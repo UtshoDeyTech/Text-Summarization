@@ -35,3 +35,5 @@ LLAMA_URL="https://ollama.askken.ai/"
 MAX_CHUNKS = 5
 MODEL = "gpt-3.5-turbo"
 NUM_SUGGESTIONS = 3
+
+PERPLEXITY_API_KEY= os.environ.get("PERPLEXITY_API_KEY")  # Default key for testing
