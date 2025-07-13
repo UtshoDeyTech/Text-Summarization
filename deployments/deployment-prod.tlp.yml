@@ -28,6 +28,8 @@ spec:
               value: "TEST_VAL_PLACEHOLDER"
             - name: OPENAI_API_KEY
               value: "OPENAI_API_KEY_PLACEHOLDER"
+            - name: PERPLEXITY_API_KEY
+              value: "PERPLEXITY_API_KEY_PLACEHOLDER"
             - name: PINECONE_API_KEY
               value: "PINECONE_API_KEY_PLACEHOLDER"
             - name: PINECONE_ENVIRONMENT
