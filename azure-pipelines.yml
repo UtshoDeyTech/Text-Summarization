@@ -71,6 +71,7 @@ stages:
               sed -i 's|BUILD_NUMBER_PLACEHOLDER|$(Build.BuildId)|g' ./deployments/deployment-dev.yml
               sed -i 's|TEST_VAL_PLACEHOLDER|$(TestVal)|g' ./deployments/deployment-dev.yml
               sed -i 's|OPENAI_API_KEY_PLACEHOLDER|$(OPENAI_API_KEY)|g' ./deployments/deployment-dev.yml
+              sed -i 's|PERPLEXITY_API_KEY_PLACEHOLDER|$(PERPLEXITY_API_KEY)|g' ./deployments/deployment-dev.yml
               sed -i 's|PINECONE_API_KEY_PLACEHOLDER|$(PINECONE_API_KEY)|g' ./deployments/deployment-dev.yml
               sed -i 's|PINECONE_ENVIRONMENT_PLACEHOLDER|$(PINECONE_ENVIRONMENT)|g' ./deployments/deployment-dev.yml
               sed -i 's|S3_REGION_NAME_PLACEHOLDER|$(S3_REGION_NAME)|g' ./deployments/deployment-dev.yml
@@ -152,6 +153,7 @@ stages:
               sed -i 's|BUILD_NUMBER_PLACEHOLDER|$(Build.BuildId)|g' ./deployments/deployment-prod.yml
               sed -i 's|TEST_VAL_PLACEHOLDER|$(TestVal)|g' ./deployments/deployment-prod.yml
               sed -i 's|OPENAI_API_KEY_PLACEHOLDER|$(OPENAI_API_KEY)|g' ./deployments/deployment-prod.yml
+              sed -i 's|PERPLEXITY_API_KEY_PLACEHOLDER|$(PERPLEXITY_API_KEY)|g' ./deployments/deployment-prod.yml
               sed -i 's|PINECONE_API_KEY_PLACEHOLDER|$(PINECONE_API_KEY)|g' ./deployments/deployment-prod.yml
               sed -i 's|PINECONE_ENVIRONMENT_PLACEHOLDER|$(PINECONE_ENVIRONMENT)|g' ./deployments/deployment-prod.yml
               sed -i 's|S3_REGION_NAME_PLACEHOLDER|$(S3_REGION_NAME)|g' ./deployments/deployment-prod.yml
