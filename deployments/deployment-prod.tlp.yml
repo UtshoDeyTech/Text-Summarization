@@ -16,7 +16,7 @@ spec:
         linkerd.io/inject: enabled
     spec:
       nodeSelector:
-            role: worker
+        role: worker
       containers:
         - name: askken-python-prod-api
           image: ${ECR_REPOSITORY}/${ASKKEN_PYTHON_PROD_IMAGE_NAME}:BUILD_NUMBER_PLACEHOLDER
@@ -28,8 +28,6 @@ spec:
               value: "TEST_VAL_PLACEHOLDER"
             - name: OPENAI_API_KEY
               value: "OPENAI_API_KEY_PLACEHOLDER"
-            - name: PERPLEXITY_API_KEY
-              value: "PERPLEXITY_API_KEY_PLACEHOLDER"
             - name: PINECONE_API_KEY
               value: "PINECONE_API_KEY_PLACEHOLDER"
             - name: PINECONE_ENVIRONMENT
@@ -68,6 +66,14 @@ spec:
               value: LOG_APP_NAME_PLACEHOLDER
             - name: VALIDATION_DAYS
               value: VALIDATION_DAYS_PLACEHOLDER
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "240Mi"
+            limits:
+              cpu: "50m"
+              memory: "300Mi"
+
 ---
 apiVersion: v1
 kind: Service
