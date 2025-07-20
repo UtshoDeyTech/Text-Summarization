@@ -26,6 +26,8 @@ spec:
           env:
             - name: TestVal
               value: "TEST_VAL_PLACEHOLDER"
+            - name: PERPLEXITY_API_KEY
+              value: "PERPLEXITY_API_KEY_PLACEHOLDER"
             - name: OPENAI_API_KEY
               value: "OPENAI_API_KEY_PLACEHOLDER"
             - name: PINECONE_API_KEY
