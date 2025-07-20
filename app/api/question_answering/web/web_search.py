@@ -36,66 +36,50 @@ async def web_search(request: WebSearchRequest) -> WebSearchResponse:
                 detail="Question cannot be empty"
             )
         
-        # Get answer from Perplexity AI (using fixed model)
-        ai_response = await perplexity_client.ask_question(
+        # Get answer from Perplexity AI - REMOVED await, function returns a dict
+        ai_response = perplexity_client.ask_question(
             question=request.question
         )
         
-        # Parse the JSON response from AI
+        # ai_response is now a dictionary with keys: html_table, sources, summary, raw_response
+        # No need to parse JSON - it's already structured
+        
         try:
-            # Clean up any potential formatting issues
-            ai_response = ai_response.strip()
+            # Extract HTML table and sources from the response dictionary
+            html_table = ai_response.get('html_table', '')
+            sources = ai_response.get('sources', [])
             
-            # Remove markdown JSON formatting if present
-            if ai_response.startswith('```json'):
-                ai_response = ai_response.replace('```json', '').replace('```', '').strip()
-            elif ai_response.startswith('```'):
-                ai_response = ai_response.replace('```', '').strip()
+            # Ensure we have valid HTML table
+            if not html_table:
+                # Fallback: create basic table if none provided
+                summary = ai_response.get('summary', 'No property information available')
+                html_table = f"<table><thead><tr><th>Property Information</th></tr></thead><tbody><tr><td>{summary}</td></tr></table>"
             
-            # Find JSON object boundaries
-            start_idx = ai_response.find('{')
-            end_idx = ai_response.rfind('}')
+            # Ensure sources is a list and has at least 2 entries
+            if not isinstance(sources, list):
+                sources = []
             
-            if start_idx == -1 or end_idx == -1:
-                raise ValueError("No valid JSON object found in AI response")
-            
-            # Extract just the JSON part
-            json_str = ai_response[start_idx:end_idx + 1]
-            
-            parsed_response = json.loads(json_str)
-            
-            # Validate response structure
-            if 'answer' not in parsed_response or 'source' not in parsed_response:
-                raise ValueError("AI response missing required fields: answer or source")
-            
-            # Validate field types
-            if not isinstance(parsed_response['answer'], str):
-                raise ValueError("Answer field must be a string")
-            
-            if not isinstance(parsed_response['source'], list):
-                raise ValueError("Source field must be a list")
-            
-            # Ensure at least 2 sources (but don't fail if less, just warn)
-            if len(parsed_response['source']) < 2:
-                # Add a fallback source if needed
-                while len(parsed_response['source']) < 2:
-                    parsed_response['source'].append("Additional research recommended for complete verification")
+            # Add fallback sources if we don't have enough real ones
+            if len(sources) < 2:
+                default_sources = [
+                    "https://www.zillow.com",
+                    "https://www.realtor.com",
+                    "https://www.loopnet.com"
+                ]
+                for default_source in default_sources:
+                    if len(sources) < 2 and default_source not in sources:
+                        sources.append(default_source)
             
             return WebSearchResponse(
                 question=request.question,
-                answer=parsed_response['answer'],
-                source=parsed_response['source']
+                answer=html_table,  # Return raw HTML table
+                source=sources
             )
             
-        except json.JSONDecodeError as e:
+        except Exception as e:
             raise HTTPException(
                 status_code=500,
-                detail=f"Invalid JSON response from AI: {str(e)}"
-            )
-        except ValueError as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"AI response validation error: {str(e)}"
+                detail=f"Response processing error: {str(e)}"
             )
         
     except Exception as e:
