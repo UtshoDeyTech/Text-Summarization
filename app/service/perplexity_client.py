@@ -23,7 +23,7 @@ class PerplexityClient:
             model (str): The model to use (default: "sonar-pro")
             
         Returns:
-            Dict[str, Any]: Dictionary containing HTML table and sources
+            Dict[str, Any]: Dictionary containing HTML table, sources, and suggested questions
         """
         
         # Modified system prompt to explicitly request sources
@@ -93,9 +93,13 @@ REQUIREMENTS:
                 # Extract sources from multiple methods
                 sources = self._extract_sources_comprehensive(content, citations, result)
                 
+                # Generate suggested questions based on the original question
+                suggested_questions = self._generate_suggested_questions(question)
+                
                 return {
                     "html_table": html_table,
                     "sources": sources,
+                    "suggested_questions": suggested_questions,
                     "summary": "Property information table",
                     "raw_response": content,
                     "full_api_response": result  # For debugging
@@ -109,6 +113,125 @@ REQUIREMENTS:
             return self._create_error_response(f"Request error: {str(e)}")
         except Exception as e:
             return self._create_error_response(f"Unexpected error: {str(e)}")
+    
+    def _generate_suggested_questions(self, original_question: str) -> List[str]:
+        """
+        Generate 3 related suggested questions based on the original question using Perplexity AI
+        """
+        try:
+            suggestion_prompt = f"""Based on this real estate question: "{original_question}"
+
+Generate exactly 3 related follow-up questions that a user might want to ask next. 
+The questions should be practical and related to real estate research.
+
+Format your response as a simple numbered list:
+1. [Question 1]
+2. [Question 2] 
+3. [Question 3]
+
+Keep each question concise and actionable."""
+
+            data = {
+                "model": "sonar-pro",
+                "messages": [
+                    {"role": "user", "content": suggestion_prompt}
+                ],
+                "return_citations": False,
+                "return_images": False
+            }
+            
+            response = requests.post(
+                url=self.base_url,
+                json=data,
+                headers=self.headers,
+                timeout=15  # Shorter timeout for suggestions
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if "choices" in result and len(result["choices"]) > 0:
+                    choice = result["choices"][0]
+                    if "message" in choice and "content" in choice["message"]:
+                        content = choice["message"]["content"]
+                        return self._parse_suggested_questions(content)
+            
+            # Fallback if API call fails
+            return self._generate_fallback_questions(original_question)
+            
+        except Exception:
+            # Fallback if anything goes wrong
+            return self._generate_fallback_questions(original_question)
+    
+    def _parse_suggested_questions(self, content: str) -> List[str]:
+        """Parse suggested questions from AI response"""
+        questions = []
+        
+        # Look for numbered list format
+        lines = content.strip().split('\n')
+        for line in lines:
+            line = line.strip()
+            # Match patterns like "1. Question" or "1) Question" or "• Question"
+            match = re.match(r'^\d+[\.\)]\s*(.+)$', line)
+            if match:
+                questions.append(match.group(1).strip())
+            elif line.startswith('•') or line.startswith('-'):
+                # Handle bullet points
+                question = line[1:].strip()
+                if question:
+                    questions.append(question)
+        
+        # If we couldn't parse properly, try to split by common patterns
+        if not questions and content:
+            # Try splitting by newlines and filtering
+            potential_questions = [q.strip() for q in content.split('\n') if q.strip()]
+            for pq in potential_questions:
+                # Clean up common prefixes
+                cleaned = re.sub(r'^\d+[\.\)]\s*', '', pq)
+                cleaned = re.sub(r'^[•\-]\s*', '', cleaned)
+                if cleaned and len(cleaned) > 10:  # Reasonable question length
+                    questions.append(cleaned)
+        
+        # Ensure we have exactly 3 questions, pad or trim as needed
+        if len(questions) > 3:
+            questions = questions[:3]
+        elif len(questions) < 3:
+            # Pad with fallback questions
+            fallback = self._generate_fallback_questions("")
+            questions.extend(fallback[:3-len(questions)])
+        
+        return questions[:3]
+    
+    def _generate_fallback_questions(self, original_question: str) -> List[str]:
+        """Generate fallback questions when AI suggestions fail"""
+        
+        # Analyze the original question to provide relevant fallbacks
+        question_lower = original_question.lower()
+        
+        if "property" in question_lower or "address" in question_lower:
+            return [
+                "What are the property tax rates in this area?",
+                "What are comparable properties selling for nearby?",
+                "What is the crime rate and school rating for this neighborhood?"
+            ]
+        elif "commercial" in question_lower or "business" in question_lower:
+            return [
+                "What is the foot traffic and visibility like for this location?",
+                "What are the zoning restrictions and permitted uses?",
+                "What are typical lease rates for similar commercial properties?"
+            ]
+        elif "investment" in question_lower or "rental" in question_lower:
+            return [
+                "What is the expected rental yield for this property?",
+                "What are the vacancy rates in this area?",
+                "What maintenance and management costs should I expect?"
+            ]
+        else:
+            # Generic real estate questions
+            return [
+                "What is the neighborhood market trend and price history?",
+                "What are the local amenities and transportation options?",
+                "What inspection issues or repairs might this property need?"
+            ]
     
     def _extract_or_create_table(self, content: str) -> str:
         """Extract existing table or convert content to table format"""
@@ -305,6 +428,11 @@ REQUIREMENTS:
         return {
             "html_table": f"<table><tr><td>Error: {error_msg}</td></tr></table>",
             "sources": [],
+            "suggested_questions": [
+                "What property information is available for this address?",
+                "How can I find accurate property details?",
+                "What are the best real estate data sources?"
+            ],
             "summary": f"Error: {error_msg}",
             "raw_response": error_msg
         }
@@ -338,7 +466,7 @@ def get_property_info(address: str) -> Dict[str, Any]:
         address (str): Property address to search
         
     Returns:
-        Dict[str, Any]: Property information with HTML table
+        Dict[str, Any]: Property information with HTML table, sources, and suggested questions
     """
     question = f"Find detailed property information for: {address}"
     return perplexity_client.ask_question(question)
@@ -384,6 +512,10 @@ if __name__ == "__main__":
     for source in result["sources"]:
         print(f"- {source}")
     
+    print("\nSuggested Questions:")
+    for i, question in enumerate(result["suggested_questions"], 1):
+        print(f"{i}. {question}")
+    
     print(f"\nSummary: {result['summary']}")
     
     # If no sources, try the explicit method
@@ -393,6 +525,9 @@ if __name__ == "__main__":
         print("Sources from explicit method:")
         for source in result2["sources"]:
             print(f"- {source}")
+        print("Suggested Questions from explicit method:")
+        for i, question in enumerate(result2["suggested_questions"], 1):
+            print(f"{i}. {question}")
     
     # Save to file
     perplexity_client.save_html_file(result["html_table"])

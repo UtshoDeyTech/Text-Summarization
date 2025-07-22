@@ -14,6 +14,7 @@ class WebSearchResponse(BaseModel):
     question: str
     answer: str
     source: List[str]
+    suggested_questions: List[str]
 
 def format_sources_properly(sources: List[str]) -> List[str]:
     """
@@ -95,7 +96,7 @@ async def web_search(request: WebSearchRequest) -> WebSearchResponse:
         request: WebSearchRequest containing the question and optional model
         
     Returns:
-        WebSearchResponse with the question, answer, and formatted sources
+        WebSearchResponse with the question, answer, formatted sources, and suggested questions
         
     Raises:
         HTTPException: If the search request fails
@@ -114,9 +115,10 @@ async def web_search(request: WebSearchRequest) -> WebSearchResponse:
         )
         
         try:
-            # Extract HTML table and sources from the response dictionary
+            # Extract HTML table, sources, and suggested questions from the response dictionary
             html_table = ai_response.get('html_table', '')
             raw_sources = ai_response.get('sources', [])
+            suggested_questions = ai_response.get('suggested_questions', [])
             
             # Ensure we have valid HTML table
             if not html_table:
@@ -127,6 +129,17 @@ async def web_search(request: WebSearchRequest) -> WebSearchResponse:
             # Ensure sources is a list
             if not isinstance(raw_sources, list):
                 raw_sources = []
+            
+            # Ensure suggested_questions is a list and has exactly 3 questions
+            if not isinstance(suggested_questions, list):
+                suggested_questions = []
+            
+            # Ensure we have exactly 3 suggested questions
+            while len(suggested_questions) < 3:
+                suggested_questions.append("What are additional details about this property?")
+            
+            # Trim to exactly 3 questions if we have more
+            suggested_questions = suggested_questions[:3]
             
             # Format sources to the desired "Site Name: URL" format
             formatted_sources = format_sources_properly(raw_sources)
@@ -147,7 +160,8 @@ async def web_search(request: WebSearchRequest) -> WebSearchResponse:
             return WebSearchResponse(
                 question=request.question,
                 answer=html_table,
-                source=formatted_sources
+                source=formatted_sources,
+                suggested_questions=suggested_questions
             )
             
         except Exception as e:
@@ -167,22 +181,24 @@ async def web_search(request: WebSearchRequest) -> WebSearchResponse:
             detail=f"Web search failed: {str(e)}"
         )
 
-# Alternative endpoint for testing source formatting
+# Alternative endpoint for testing source formatting and suggested questions
 @router.post("/web-search-debug")
 async def web_search_debug(request: WebSearchRequest) -> dict:
     """
-    Debug endpoint to see raw and formatted sources
+    Debug endpoint to see raw and formatted sources plus suggested questions
     """
     try:
         ai_response = perplexity_client.ask_question(request.question)
         
         raw_sources = ai_response.get('sources', [])
         formatted_sources = format_sources_properly(raw_sources)
+        suggested_questions = ai_response.get('suggested_questions', [])
         
         return {
             "question": request.question,
             "raw_sources": raw_sources,
             "formatted_sources": formatted_sources,
+            "suggested_questions": suggested_questions,
             "html_table": ai_response.get('html_table', ''),
             "full_response": ai_response
         }
