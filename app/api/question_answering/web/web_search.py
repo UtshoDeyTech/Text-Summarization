@@ -9,11 +9,20 @@ router = APIRouter()
 
 class WebSearchRequest(BaseModel):
     question: str
+    user_id: Optional[str] = None
 
 class WebSearchResponse(BaseModel):
     question: str
     answer: str
     source: List[str]
+    suggested_questions: List[str]
+    user_id: Optional[str] = None
+    conversation_context: int = 0
+
+class ConversationHistoryResponse(BaseModel):
+    user_id: str
+    history: List[dict]
+    total_entries: int
 
 def format_sources_properly(sources: List[str]) -> List[str]:
     """
@@ -89,13 +98,13 @@ def format_url_to_source(url: str) -> str:
 @router.post("/web-search")
 async def web_search(request: WebSearchRequest) -> WebSearchResponse:
     """
-    Search the web using Perplexity AI
+    Search the web using Perplexity AI with conversation history support
     
     Args:
-        request: WebSearchRequest containing the question and optional model
+        request: WebSearchRequest containing the question and optional user_id
         
     Returns:
-        WebSearchResponse with the question, answer, and formatted sources
+        WebSearchResponse with the question, answer, formatted sources, suggested questions, and conversation context
         
     Raises:
         HTTPException: If the search request fails
@@ -108,15 +117,18 @@ async def web_search(request: WebSearchRequest) -> WebSearchResponse:
                 detail="Question cannot be empty"
             )
         
-        # Get answer from Perplexity AI
+        # Get answer from Perplexity AI with conversation history
         ai_response = perplexity_client.ask_question(
-            question=request.question
+            question=request.question,
+            user_id=request.user_id
         )
         
         try:
-            # Extract HTML table and sources from the response dictionary
+            # Extract HTML table, sources, suggested questions, and conversation context from the response dictionary
             html_table = ai_response.get('html_table', '')
             raw_sources = ai_response.get('sources', [])
+            suggested_questions = ai_response.get('suggested_questions', [])
+            conversation_context = ai_response.get('conversation_context', 0)
             
             # Ensure we have valid HTML table
             if not html_table:
@@ -127,6 +139,17 @@ async def web_search(request: WebSearchRequest) -> WebSearchResponse:
             # Ensure sources is a list
             if not isinstance(raw_sources, list):
                 raw_sources = []
+            
+            # Ensure suggested_questions is a list and has exactly 3 questions
+            if not isinstance(suggested_questions, list):
+                suggested_questions = []
+            
+            # Ensure we have exactly 3 suggested questions
+            while len(suggested_questions) < 3:
+                suggested_questions.append("What are additional details about this property?")
+            
+            # Trim to exactly 3 questions if we have more
+            suggested_questions = suggested_questions[:3]
             
             # Format sources to the desired "Site Name: URL" format
             formatted_sources = format_sources_properly(raw_sources)
@@ -147,7 +170,10 @@ async def web_search(request: WebSearchRequest) -> WebSearchResponse:
             return WebSearchResponse(
                 question=request.question,
                 answer=html_table,
-                source=formatted_sources
+                source=formatted_sources,
+                suggested_questions=suggested_questions,
+                user_id=request.user_id,
+                conversation_context=conversation_context
             )
             
         except Exception as e:
@@ -167,22 +193,95 @@ async def web_search(request: WebSearchRequest) -> WebSearchResponse:
             detail=f"Web search failed: {str(e)}"
         )
 
-# Alternative endpoint for testing source formatting
+@router.get("/conversation-history/{user_id}")
+async def get_conversation_history(user_id: str) -> ConversationHistoryResponse:
+    """
+    Get conversation history for a specific user
+    
+    Args:
+        user_id: The user ID to retrieve history for
+        
+    Returns:
+        ConversationHistoryResponse with the user's conversation history
+    """
+    try:
+        history = perplexity_client.get_conversation_history(user_id)
+        
+        return ConversationHistoryResponse(
+            user_id=user_id,
+            history=history,
+            total_entries=len(history)
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve conversation history: {str(e)}"
+        )
+
+@router.delete("/conversation-history/{user_id}")
+async def clear_conversation_history(user_id: str) -> dict:
+    """
+    Clear conversation history for a specific user
+    
+    Args:
+        user_id: The user ID to clear history for
+        
+    Returns:
+        Success message
+    """
+    try:
+        success = perplexity_client.clear_conversation_history(user_id)
+        
+        if success:
+            return {
+                "message": f"Conversation history cleared for user {user_id}",
+                "user_id": user_id,
+                "success": True
+            }
+        else:
+            return {
+                "message": f"No conversation history found for user {user_id}",
+                "user_id": user_id,
+                "success": False
+            }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to clear conversation history: {str(e)}"
+        )
+
+# Alternative endpoint for testing source formatting, suggested questions, and conversation history
 @router.post("/web-search-debug")
 async def web_search_debug(request: WebSearchRequest) -> dict:
     """
-    Debug endpoint to see raw and formatted sources
+    Debug endpoint to see raw and formatted sources, suggested questions, and conversation context
     """
     try:
-        ai_response = perplexity_client.ask_question(request.question)
+        ai_response = perplexity_client.ask_question(
+            request.question, 
+            request.user_id
+        )
         
         raw_sources = ai_response.get('sources', [])
         formatted_sources = format_sources_properly(raw_sources)
+        suggested_questions = ai_response.get('suggested_questions', [])
+        conversation_context = ai_response.get('conversation_context', 0)
+        
+        # Get current conversation history
+        history = []
+        if request.user_id:
+            history = perplexity_client.get_conversation_history(request.user_id)
         
         return {
             "question": request.question,
+            "user_id": request.user_id,
             "raw_sources": raw_sources,
             "formatted_sources": formatted_sources,
+            "suggested_questions": suggested_questions,
+            "conversation_context": conversation_context,
+            "current_history": history,
             "html_table": ai_response.get('html_table', ''),
             "full_response": ai_response
         }
