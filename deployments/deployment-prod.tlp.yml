@@ -68,13 +68,13 @@ spec:
               value: LOG_APP_NAME_PLACEHOLDER
             - name: VALIDATION_DAYS
               value: VALIDATION_DAYS_PLACEHOLDER
-          resources:
-            requests:
-              cpu: "10m"
-              memory: "240Mi"
-            limits:
-              cpu: "50m"
-              memory: "300Mi"
+          # resources:
+          #   requests:
+          #     cpu: "10m"
+          #     memory: "240Mi"
+          #   limits:
+          #     cpu: "50m"
+          #     memory: "300Mi"
 
 ---
 apiVersion: v1
