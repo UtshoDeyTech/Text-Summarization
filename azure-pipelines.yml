@@ -91,6 +91,11 @@ stages:
               sed -i 's|LOG_ENVIROMENT_PLACEHOLDER|$(LOG_ENVIROMENT)|g' ./deployments/deployment-dev.yml
               sed -i 's|LOG_APP_NAME_PLACEHOLDER|$(LOG_APP_NAME)|g' ./deployments/deployment-dev.yml
               sed -i 's|VALIDATION_DAYS_PLACEHOLDER|$(VALIDATION_DAYS)|g' ./deployments/deployment-dev.yml
+              sed -i 's|DB_HOST_PLACEHOLDER|$(DB_HOST)|g' ./deployments/deployment-dev.yml
+              sed -i 's|DB_USER_PLACEHOLDER|$(DB_USER)|g' ./deployments/deployment-dev.yml
+              sed -i 's|DB_PASSWORD_PLACEHOLDER|$(DB_PASSWORD)|g' ./deployments/deployment-dev.yml
+              sed -i 's|DB_NAME_PLACEHOLDER|$(DB_NAME)|g' ./deployments/deployment-dev.yml
+              sed -i 's|DB_PORT_PLACEHOLDER|$(DB_PORT)|g' ./deployments/deployment-dev.yml
               kubectl apply -f ./deployments/deployment-dev.yml
             displayName: "Deploy to ASKKEN PYTHON API Development"
 
@@ -172,6 +177,11 @@ stages:
               sed -i 's|ASP_BACKEND_URL_PLACEHOLDER|$(ASP_BACKEND_URL)|g' ./deployments/deployment-prod.yml   
               sed -i 's|LOG_ENVIROMENT_PLACEHOLDER|$(LOG_ENVIROMENT)|g' ./deployments/deployment-prod.yml
               sed -i 's|LOG_APP_NAME_PLACEHOLDER|$(LOG_APP_NAME)|g' ./deployments/deployment-prod.yml   
-              sed -i 's|VALIDATION_DAYS_PLACEHOLDER|$(VALIDATION_DAYS)|g' ./deployments/deployment-prod.yml   
+              sed -i 's|VALIDATION_DAYS_PLACEHOLDER|$(VALIDATION_DAYS)|g' ./deployments/deployment-prod.yml
+              sed -i 's|DB_HOST_PLACEHOLDER|$(DB_HOST)|g' ./deployments/deployment-prod.yml
+              sed -i 's|DB_USER_PLACEHOLDER|$(DB_USER)|g' ./deployments/deployment-prod.yml
+              sed -i 's|DB_PASSWORD_PLACEHOLDER|$(DB_PASSWORD)|g' ./deployments/deployment-prod.yml
+              sed -i 's|DB_NAME_PLACEHOLDER|$(DB_NAME)|g' ./deployments/deployment-prod.yml
+              sed -i 's|DB_PORT_PLACEHOLDER|$(DB_PORT)|g' ./deployments/deployment-prod.yml
               kubectl apply -f ./deployments/deployment-prod.yml
             displayName: "Deploy to ASKKEN PYTHON API Production"
