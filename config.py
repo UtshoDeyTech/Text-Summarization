@@ -32,6 +32,12 @@ VALIDATION_DAYS=os.environ.get("VALIDATION_DAYS")
 
 LLAMA_URL="https://ollama.askken.ai/"
 
+DB_HOST=os.environ.get("DB_HOST")
+DB_USER=os.environ.get("DB_USER")
+DB_PASSWORD=os.environ.get("DB_PASSWORD")
+DB_NAME=os.environ.get("DB_NAME")
+DB_PORT=os.environ.get("DB_PORT")
+
 MAX_CHUNKS = 5
 MODEL = "gpt-3.5-turbo"
 NUM_SUGGESTIONS = 3
