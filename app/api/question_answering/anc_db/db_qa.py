@@ -18,8 +18,8 @@ router = APIRouter()
 # Security Configuration
 class SecurityConfig:
     MAX_QUERY_LENGTH = 3000
-    MAX_ITERATIONS = 4
-    MAX_EXECUTION_TIME = 30
+    MAX_ITERATIONS = 8
+    MAX_EXECUTION_TIME = 45
     RATE_LIMIT_PER_MINUTE = 15
     
     FORBIDDEN_PATTERNS = [
@@ -30,8 +30,23 @@ class SecurityConfig:
         r'(\;.*\;)',
     ]
 
+# Allowed tables - only leads tables and customer_master
+ALLOWED_TABLES = {
+    'auto_leads',
+    'gasstation_leads', 
+    'general_business_leads',
+    'general_contractor_leads',
+    'home_leads',
+    'hotel_leads',
+    'restaurant_leads',
+    'salon_leads',
+    'shopping_leads',
+    'tank_leads',
+    'customer_master'
+}
+
 class AncDBInput(BaseModel):
-    question: str = Field(description="Any question about the database", max_length=SecurityConfig.MAX_QUERY_LENGTH)
+    question: str = Field(description="Any question about leads or customer data", max_length=SecurityConfig.MAX_QUERY_LENGTH)
     agent_id: Optional[str] = Field(default=None, description="Agent ID for filtering", max_length=100)
     agency_id: Optional[str] = Field(default=None, description="Agency ID for filtering", max_length=100)
 
@@ -64,91 +79,66 @@ class AncDBResponse(BaseModel):
     execution_time: float = 0
     filtered_by: str = ""
 
-def get_intelligent_system_prompt(agent_id: Optional[str], agency_id: Optional[str]) -> str:
-    """Create a focused system prompt targeting the specific *_leads tables"""
+def get_restricted_system_prompt(agent_id: Optional[str], agency_id: Optional[str]) -> str:
+    """Create a system prompt that restricts access to only leads tables and customer_master"""
     
-    filter_conditions = []
-    if agent_id:
-        filter_conditions.append(f"agent_id = '{agent_id}'")
-    if agency_id:
-        filter_conditions.append(f"agency_id = '{agency_id}'")
+    filter_info = ""
+    if agent_id and agency_id:
+        filter_info = f"FILTERING: When querying tables with agent_id and agency_id columns, ALWAYS add: WHERE agent_id = '{agent_id}' AND agency_id = '{agency_id}'"
+    elif agent_id:
+        filter_info = f"FILTERING: When querying tables with agent_id column, ALWAYS add: WHERE agent_id = '{agent_id}'"
+    elif agency_id:
+        filter_info = f"FILTERING: When querying tables with agency_id column, ALWAYS add: WHERE agency_id = '{agency_id}'"
     
-    filter_clause = " AND ".join(filter_conditions) if filter_conditions else ""
+    allowed_tables_list = ', '.join(sorted(ALLOWED_TABLES))
     
-    return f"""You are an intelligent database assistant focused on finding customer/lead information efficiently.
+    return f"""You are a specialized database assistant for lead and customer data ONLY.
 
-SECURITY: Only use SELECT queries. For tables with agent_id/agency_id, include: WHERE {filter_clause}
+{filter_info}
 
-PRIMARY TARGET TABLES (*_leads tables):
-- auto_leads, gasstation_leads, general_business_leads, general_contractor_leads
-- home_leads, hotel_leads, restaurant_leads, salon_leads, shopping_leads, tank_leads
-- lead_source, lead_workflow, lead_workflow_payment, lead_workflow_reason
+STRICT TABLE RESTRICTIONS:
+You can ONLY query these tables:
+- auto_leads
+- gasstation_leads  
+- general_business_leads
+- general_contractor_leads
+- home_leads
+- hotel_leads
+- restaurant_leads
+- salon_leads
+- shopping_leads
+- tank_leads
+- customer_master
 
-PRIORITY SEARCH STRATEGY:
-1. FIRST PRIORITY: Search ALL *_leads tables (these contain your customer data)
-2. SECOND PRIORITY: If no results, check customer_master, secondary_contact  
-3. LAST RESORT: Other general tables like AgencyProfile, agent_master
+FORBIDDEN ACTIONS:
+- Do NOT query any other tables (AgencyProfile, agent_master, billing, etc.)
+- Do NOT use SHOW TABLES or explore database structure
+- If asked about other tables, politely decline and redirect to leads data
 
-EFFICIENT WORKFLOW:
-1. Start with the most common *_leads tables: auto_leads, home_leads, general_business_leads
-2. Check table structure: SHOW COLUMNS FROM auto_leads (or other *_leads table)
-3. Search with comprehensive OR conditions across multiple person fields
-4. Only check other tables if *_leads tables have no results
+INSTRUCTIONS:
+- Only use SELECT queries on the allowed tables above
+- Apply agent_id/agency_id filtering when those columns exist
+- Focus on customer information: names, emails, addresses, phone numbers
+- Use LIKE '%term%' for flexible searching
+- Be efficient - try the most relevant table first
 
-SMART SEARCHING PATTERN:
-For "what is X's address" - search *_leads tables:
-```sql
-SELECT address, street, location, home_address FROM auto_leads 
-WHERE {filter_clause} AND (
-  name LIKE '%X%' OR 
-  first_name LIKE '%X%' OR 
-  email LIKE '%X%' OR 
-  contact_email LIKE '%X%' OR
-  phone LIKE '%X%'
-) LIMIT 5
-```
+EXAMPLE QUERIES:
+- Emails in home leads: "SELECT email, contact_email FROM home_leads WHERE agent_id = 'value' AND email IS NOT NULL"
+- Customer names: "SELECT name, first_name, last_name FROM auto_leads WHERE agency_id = 'value'"
+- Addresses: "SELECT location_address, mailing_address FROM home_leads WHERE agent_id = 'value'"
 
-If no results, try next *_leads table:
-```sql
-SELECT address, street, location FROM home_leads 
-WHERE {filter_clause} AND (
-  name LIKE '%X%' OR email LIKE '%X%'
-) LIMIT 5
-```
+RESPONSE GUIDELINES:
+- If asked about non-leads tables: "I can only help with leads and customer data. Please ask about specific lead types (home, auto, restaurant, etc.) or customer information."
+- Always explain which table(s) you searched
+- Provide specific, useful information when found
+- If no results: "No matching records found in the [table_name] table with your current filters."
 
-INFORMATION MAPPING:
-- Address questions → address, street, location, home_address, work_address
-- Phone questions → phone, mobile, contact_number, work_phone, cell_phone  
-- Email questions → email, contact_email, work_email
+Remember: You are restricted to leads tables and customer_master only!"""
 
-TABLE SEARCH ORDER:
-1. auto_leads (largest lead table)
-2. home_leads  
-3. general_business_leads
-4. restaurant_leads, hotel_leads, salon_leads
-5. gasstation_leads, shopping_leads, tank_leads
-6. If no results: customer_master, secondary_contact
-7. Last resort: AgencyProfile, agent_master
-
-EFFICIENCY RULES:
-- Focus on *_leads tables first - maximum data is here
-- Maximum 4-5 queries total
-- Use LIMIT 5 on all queries
-- Stop when you find the answer
-- Try 2-3 different *_leads tables before moving to other tables
-
-RESPONSE FORMAT:
-- Found: "I found [person]'s [info]: [answer]"
-- Not found: "No records found for [person] in your lead databases"
-
-Remember: Your customer data is primarily in *_leads tables - search them thoroughly first!"""
-
-class IntelligentAncDBAgent:
+class RestrictedAncDBAgent:
     def __init__(self, agent_id: Optional[str] = None, agency_id: Optional[str] = None):
         self.agent_id = agent_id
         self.agency_id = agency_id
-        self.query_count = 0
-        self.start_time = time.time()
         self.setup_environment()
         self.connection_url = self.build_connection_url()
         self.db = None
@@ -171,8 +161,10 @@ class IntelligentAncDBAgent:
     def test_connection(self) -> bool:
         try:
             self.db = SQLDatabase.from_uri(self.connection_url)
-            tables = self.db.get_usable_table_names()
-            logger.info(f"Connected to database with {len(tables)} tables")
+            # Verify only allowed tables are accessible
+            all_tables = self.db.get_usable_table_names()
+            available_allowed = [t for t in all_tables if t in ALLOWED_TABLES]
+            logger.info(f"Connected to database. Available allowed tables: {available_allowed}")
             return True
         except Exception as e:
             logger.error(f"Database connection failed: {e}")
@@ -182,75 +174,120 @@ class IntelligentAncDBAgent:
         try:
             self.llm = ChatOpenAI(
                 model_name="gpt-4o-mini",
-                temperature=0.1,
+                temperature=0,
                 max_tokens=2000,
                 request_timeout=SecurityConfig.MAX_EXECUTION_TIME
             )
             
+            # Create a restricted toolkit that only includes allowed tables
             toolkit = SQLDatabaseToolkit(db=self.db, llm=self.llm)
-            system_message = SystemMessage(content=get_intelligent_system_prompt(self.agent_id, self.agency_id))
+            
+            system_message = SystemMessage(content=get_restricted_system_prompt(self.agent_id, self.agency_id))
             
             self.agent = create_sql_agent(
                 llm=self.llm,
                 toolkit=toolkit,
-                verbose=False,
+                verbose=True,
                 agent_type="openai-tools",
                 system_message=system_message,
                 max_iterations=SecurityConfig.MAX_ITERATIONS,
-                handle_parsing_errors=True
+                handle_parsing_errors=True,
+                early_stopping_method="generate"
             )
             
-            logger.info(f"Agent initialized for agent_id: {self.agent_id}, agency_id: {self.agency_id}")
+            logger.info(f"Restricted agent initialized for agent_id: {self.agent_id}, agency_id: {self.agency_id}")
             return True
             
         except Exception as e:
             logger.error(f"Agent initialization failed: {e}")
             return False
     
-    def process_intelligent_question(self, question: str) -> tuple:
+    def validate_query_safety(self, query: str) -> bool:
+        """Validate that query only accesses allowed tables"""
+        query_upper = query.upper()
+        
+        # Check for forbidden table access patterns
+        forbidden_tables = [
+            'AGENCYPROFILE', 'BILLINGADDON', 'CHATMESSAGES', 'CHATSESSION',
+            'COMPANYINFO', 'PDFDATA', 'ROLE', 'USERCOMPANYACCESS',
+            'AGENT_LOGIN_ACTIVITY', 'AGENT_MASTER', 'API_REQUEST_LOG',
+            'BILLING', 'CHATBOT_QUESTION', 'CHATHISTORYLOG', 'COMMENT_MASTER',
+            'COUPON', 'DRIVER_DETAILS', 'EPAY_TRANSACTIONS', 'LEAD_SOURCE',
+            'LEAD_WORKFLOW', 'LEAD_WORKFLOW_PAYMENT', 'LEAD_WORKFLOW_REASON',
+            'MANAGE_TEAM', 'NOTIFICATION', 'PACKAGE_DESCRIPTION', 'PACKAGE_INFO',
+            'PAYMENTDETAIL', 'PDF_TEMPLATES', 'RESPONSE_MESSAGE', 'SECONDARY_CONTACT',
+            'TEAMMATES', 'USER_PACKAGE', 'USERS', 'VEHICLE_DETAILS', 'WORKFLOW_MASTER'
+        ]
+        
+        for forbidden_table in forbidden_tables:
+            if f' {forbidden_table}' in query_upper or f'`{forbidden_table}`' in query_upper:
+                logger.warning(f"Attempted to access forbidden table: {forbidden_table}")
+                return False
+        
+        return True
+    
+    def process_question(self, question: str) -> tuple:
         try:
-            self.query_count += 1
-            if self.query_count > SecurityConfig.RATE_LIMIT_PER_MINUTE:
-                raise ValueError("Rate limit exceeded. Please wait before making more requests.")
+            logger.info(f"Processing restricted question: {question}")
             
-            logger.info(f"Processing question: {question}")
+            # Check if question is asking about forbidden tables
+            question_lower = question.lower()
+            forbidden_keywords = ['agency', 'billing', 'chat', 'user', 'agent_master', 'workflow']
             
+            if any(keyword in question_lower for keyword in forbidden_keywords):
+                if not any(allowed in question_lower for allowed in ['leads', 'customer']):
+                    return (
+                        "I can only help with leads and customer data. Please ask about specific lead types (home leads, auto leads, restaurant leads, etc.) or customer information.",
+                        [
+                            "What customer emails are in home leads?",
+                            "How many auto leads do I have?", 
+                            "What are the customer names in restaurant leads?"
+                        ]
+                    )
+            
+            # Create focused prompt for leads data only
             prompt = f"""
-Question: "{question}"
-Context: agent_id={self.agent_id}, agency_id={self.agency_id}
+Question: {question}
 
-Search the database efficiently to answer this question. Use maximum 4 queries total.
-Focus on *_leads tables first (auto_leads, home_leads, general_business_leads, etc.)
+Search ONLY in these allowed tables for the answer:
+- auto_leads, gasstation_leads, general_business_leads, general_contractor_leads
+- home_leads, hotel_leads, restaurant_leads, salon_leads, shopping_leads, tank_leads  
+- customer_master
 
-1. Quick exploration of *_leads tables
-2. One targeted search query in the most relevant *_leads table
-3. If needed, try one more *_leads table
-4. Provide the answer
+Apply the filtering rules if tables have agent_id/agency_id columns.
+Focus on customer information: names, emails, addresses, phone numbers.
 
-Be direct and efficient. Don't over-search.
+Format your response as:
+ANSWER: [Your specific answer with data found]
+SUGGESTED_QUESTIONS:
+1. [Related question about leads data]
+2. [Related question about customer information]
+3. [Related question about other lead types]
 """
             
             response = self.agent.invoke({"input": prompt})
             result = response["output"] if isinstance(response, dict) else str(response)
             
+            # Parse the response
             if "SUGGESTED_QUESTIONS:" in result:
                 parts = result.split("SUGGESTED_QUESTIONS:")
                 answer = parts[0].replace("ANSWER:", "").strip()
                 suggestions = []
                 if len(parts) > 1:
-                    lines = parts[1].strip().split("\n")[:3]
+                    lines = parts[1].strip().split("\n")
                     for line in lines:
                         clean = re.sub(r'^\d+\.\s*', '', line.strip())
-                        if clean:
+                        if clean and len(suggestions) < 3:
                             suggestions.append(clean)
             else:
                 answer = result.strip()
                 suggestions = []
             
+            # Ensure we have 3 suggestions related to leads data
             default_suggestions = [
-                "What other information is available for this person?",
-                "Can you show me more details about this lead?",
-                "How can I search for similar records?"
+                "What other customer information is available in this lead type?",
+                "How many total leads are in this category?",
+                "What are the contact details for these customers?"
             ]
             while len(suggestions) < 3:
                 suggestions.append(default_suggestions[len(suggestions)])
@@ -258,78 +295,69 @@ Be direct and efficient. Don't over-search.
             return answer, suggestions[:3]
             
         except Exception as e:
-            logger.error(f"Error processing question: {e}")
-            return f"Error: {str(e)}", [
-                "Try a simpler question",
-                "Check if the data exists in your leads",
-                "Contact support if needed"
-            ]
+            logger.error(f"Error processing restricted question: {e}")
+            return (
+                f"I encountered an error while searching the leads data: {str(e)}",
+                [
+                    "Try asking about a specific lead type (home, auto, restaurant)",
+                    "Ask for customer emails or contact information",
+                    "Try rephrasing your question about leads data"
+                ]
+            )
 
 # Global agent management
-_intelligent_agents = {}
-_agent_last_access = {}
+_restricted_agents = {}
 
-def get_intelligent_agent(agent_id: Optional[str], agency_id: Optional[str]):
-    if not agent_id and not agency_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Access denied. Valid agent_id and/or agency_id required."
-        )
+def get_restricted_agent(agent_id: Optional[str], agency_id: Optional[str]):
+    """Get or create a restricted agent instance"""
+    cache_key = f"restricted_{agent_id or 'none'}_{agency_id or 'none'}"
     
-    cache_key = f"intel_{agent_id or 'none'}_{agency_id or 'none'}"
-    
-    current_time = time.time()
-    if cache_key in _agent_last_access:
-        if current_time - _agent_last_access[cache_key] < 2:
-            raise HTTPException(
-                status_code=429,
-                detail="Please wait a moment between requests."
-            )
-    
-    _agent_last_access[cache_key] = current_time
-    
-    if cache_key not in _intelligent_agents:
+    if cache_key not in _restricted_agents:
         try:
-            _intelligent_agents[cache_key] = IntelligentAncDBAgent(agent_id=agent_id, agency_id=agency_id)
+            _restricted_agents[cache_key] = RestrictedAncDBAgent(agent_id=agent_id, agency_id=agency_id)
             
-            if not _intelligent_agents[cache_key].test_connection():
+            if not _restricted_agents[cache_key].test_connection():
                 raise HTTPException(status_code=500, detail="Database connection failed")
             
-            if not _intelligent_agents[cache_key].initialize_agent():
+            if not _restricted_agents[cache_key].initialize_agent():
                 raise HTTPException(status_code=500, detail="Agent initialization failed")
                 
         except Exception as e:
-            logger.error(f"Failed to create intelligent agent: {str(e)}")
+            logger.error(f"Failed to create restricted agent: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Agent creation failed: {str(e)}")
     
-    return _intelligent_agents[cache_key]
+    return _restricted_agents[cache_key]
 
 @router.post("/ask-ancdb", response_model=AncDBResponse)
-async def ask_ancdb_intelligent(input_data: AncDBInput):
-    """Intelligent endpoint that can handle ANY question about the ANC database"""
+async def ask_ancdb_restricted(input_data: AncDBInput):
+    """Ask questions about leads and customer data only"""
     start_time = time.time()
     
     try:
-        intelligent_agent = get_intelligent_agent(input_data.agent_id, input_data.agency_id)
-        answer, suggested_questions = intelligent_agent.process_intelligent_question(input_data.question)
+        # Get the restricted agent
+        agent = get_restricted_agent(input_data.agent_id, input_data.agency_id)
         
+        # Process the question
+        answer, suggested_questions = agent.process_question(input_data.question)
+        
+        # Build filter description
         filter_parts = []
         if input_data.agent_id:
             filter_parts.append(f"agent_id: {input_data.agent_id}")
         if input_data.agency_id:
             filter_parts.append(f"agency_id: {input_data.agency_id}")
-        filtered_by = ", ".join(filter_parts)
+        filtered_by = ", ".join(filter_parts) if filter_parts else "No filtering"
         
         execution_time = round(time.time() - start_time, 2)
         
-        logger.info(f"Intelligent query completed in {execution_time}s")
+        logger.info(f"Restricted query completed in {execution_time}s with filtering: {filtered_by}")
         
         return AncDBResponse(
             question=input_data.question,
             answer=answer,
-            sources=["ANC Database (Intelligent Search)"],
+            sources=["ANC Database (Leads & Customer Data Only)"],
             suggested_questions=suggested_questions,
-            model_used="GPT-4o-mini (Intelligent Mode)",
+            model_used="GPT-4o-mini (Restricted Mode)",
             status_code="200",
             found=True,
             execution_time=execution_time,
@@ -340,18 +368,18 @@ async def ask_ancdb_intelligent(input_data: AncDBInput):
         raise
     except Exception as e:
         execution_time = time.time() - start_time
-        logger.error(f"Intelligent endpoint error: {str(e)}")
+        logger.error(f"Error in restricted endpoint: {str(e)}")
         
         return AncDBResponse(
             question=input_data.question,
-            answer=f"I apologize, but I encountered an issue while searching for that information. Error: {str(e)}. Please try rephrasing your question.",
+            answer="I can only help with leads and customer data. Please ask about specific lead types (home, auto, restaurant, etc.) or customer information.",
             sources=[],
             suggested_questions=[
-                "Can you try asking your question in a different way?",
-                "Would you like me to show you what data I can access?",
-                "Can I help you with a different type of search?"
+                "What customer emails are in home leads?",
+                "How many auto leads do I have?",
+                "What contact information is available in restaurant leads?"
             ],
-            model_used="GPT-4o-mini (Intelligent Mode)",
+            model_used="GPT-4o-mini (Restricted Mode)", 
             status_code="500",
             found=False,
             execution_time=round(execution_time, 2),
