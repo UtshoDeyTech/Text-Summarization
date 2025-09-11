@@ -27,6 +27,8 @@ spec:
               value: "TEST_VAL_PLACEHOLDER"
             - name: OPENAI_API_KEY
               value: "OPENAI_API_KEY_PLACEHOLDER"
+            - name: PERPLEXITY_API_KEY
+              value: "PERPLEXITY_API_KEY_PLACEHOLDER"
             - name: PINECONE_API_KEY
               value: "PINECONE_API_KEY_PLACEHOLDER"
             - name: PINECONE_ENVIRONMENT
@@ -65,6 +67,16 @@ spec:
               value: LOG_APP_NAME_PLACEHOLDER
             - name: VALIDATION_DAYS
               value: VALIDATION_DAYS_PLACEHOLDER
+            - name: DB_HOST
+              value: "DB_HOST_PLACEHOLDER"
+            - name: DB_USER
+              value: "DB_USER_PLACEHOLDER"
+            - name: DB_PASSWORD
+              value: "DB_PASSWORD_PLACEHOLDER"
+            - name: DB_NAME
+              value: "DB_NAME_PLACEHOLDER"
+            - name: DB_PORT
+              value: "DB_PORT_PLACEHOLDER"
 
 ---
 apiVersion: v1
