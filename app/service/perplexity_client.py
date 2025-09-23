@@ -29,10 +29,10 @@ class PerplexityClient:
             model (str): The model to use (default: "sonar-pro")
             
         Returns:
-            Dict[str, Any]: Dictionary containing HTML table, sources, suggested questions, and conversation context
+            Dict[str, Any]: Dictionary containing HTML table, sources, suggested questions, property type info, and conversation context
         """
         
-        # Smart system prompt that adapts based on question type and context
+        # Simple system prompt - let AI naturally handle property type detection
         system_prompt = """You are a real estate expert. Always respond with comprehensive property information in this EXACT detailed HTML table format:
 
 <table><thead><tr><th>Category</th><th>Details</th></tr></thead><tbody>
@@ -70,7 +70,9 @@ COMPARISON HANDLING:
 - Include property A vs property B details, key differences, investment implications
 - Reference specific details from previous queries in your response
 
-Keep table structure raw HTML without any CSS styling or style attributes. Use only <strong> tags for category headers."""
+Keep table structure raw HTML without any CSS styling or style attributes. Use only <strong> tags for category headers.
+
+Note: If the property clearly matches one of these types: ["Home", "Auto", "Gas Station", "Restaurant", "Salon", "General Contractor", "Shopping Mall", "General Business", "Hotel/Motel"], please note this in your analysis."""
 
         # Build messages with conversation history
         messages = [{"role": "system", "content": system_prompt}]
@@ -110,6 +112,9 @@ Keep table structure raw HTML without any CSS styling or style attributes. Use o
                 # Extract/create HTML table
                 html_table = self._extract_or_create_table(content)
                 
+                # Simple property type detection - let AI decide naturally
+                is_type, property_type = self._detect_property_type(html_table, content)
+                
                 # Extract text from table for conversation history (cost optimization)
                 answer_text = self._extract_text_from_table(html_table)
                 
@@ -130,6 +135,8 @@ Keep table structure raw HTML without any CSS styling or style attributes. Use o
                     "summary": "Property information table",
                     "raw_response": content,
                     "conversation_context": len(self.conversation_history.get(user_id, [])),
+                    "is_type": is_type,
+                    "type": property_type,
                     "debug_info": {  # Add debug info to help troubleshoot
                         "has_citations_param": bool(result.get("citations")),
                         "citations_count": len(result.get("citations", [])),
@@ -147,6 +154,40 @@ Keep table structure raw HTML without any CSS styling or style attributes. Use o
             return self._create_error_response(f"Request error: {str(e)}")
         except Exception as e:
             return self._create_error_response(f"Unexpected error: {str(e)}")
+    
+    def _detect_property_type(self, html_table: str, content: str) -> tuple[bool, str]:
+        """
+        Simple property type detection based on content
+        """
+        property_types = [
+            "Home", "Auto", "Gas Station", "Restaurant", "Salon",
+            "General Contractor", "Shopping Mall", "General Business", "Hotel/Motel"
+        ]
+        
+        # Combine table and content for analysis
+        full_text = (html_table + " " + content).lower()
+        
+        # Simple keyword-based detection
+        if any(word in full_text for word in ['home', 'house', 'residential', 'single-family', 'condo', 'townhouse']):
+            return True, "Home"
+        elif any(word in full_text for word in ['gas station', 'fuel', 'petrol', 'service station']):
+            return True, "Gas Station"
+        elif any(word in full_text for word in ['restaurant', 'cafe', 'diner', 'food service']):
+            return True, "Restaurant"
+        elif any(word in full_text for word in ['hotel', 'motel', 'inn', 'hospitality']):
+            return True, "Hotel/Motel"
+        elif any(word in full_text for word in ['mall', 'shopping center', 'retail center']):
+            return True, "Shopping Mall"
+        elif any(word in full_text for word in ['salon', 'beauty', 'spa']):
+            return True, "Salon"
+        elif any(word in full_text for word in ['auto', 'car dealer', 'automotive']):
+            return True, "Auto"
+        elif any(word in full_text for word in ['contractor', 'construction']):
+            return True, "General Contractor"
+        elif any(word in full_text for word in ['commercial', 'business', 'office']):
+            return True, "General Business"
+        
+        return False, None
     
     def _extract_content(self, result: Dict) -> str:
         """Extract content from API response"""
@@ -521,7 +562,9 @@ Keep table structure raw HTML without any CSS styling or style attributes. Use o
             ],
             "summary": f"Error: {error_msg}",
             "raw_response": error_msg,
-            "conversation_context": 0
+            "conversation_context": 0,
+            "is_type": False,
+            "type": None
         }
     
     def get_conversation_history(self, user_id: str) -> List[Dict[str, Any]]:

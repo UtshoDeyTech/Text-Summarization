@@ -17,6 +17,8 @@ class WebSearchResponse(BaseModel):
     suggested_questions: List[str]
     user_id: Optional[str] = None
     conversation_context: int = 0
+    is_type: bool = False
+    type: Optional[str] = None
 
 class ConversationHistoryResponse(BaseModel):
     user_id: str
@@ -73,14 +75,14 @@ async def web_search(request: WebSearchRequest) -> WebSearchResponse:
         request: WebSearchRequest with question and optional user_id
         
     Returns:
-        WebSearchResponse with HTML table, sources, and suggested questions
+        WebSearchResponse with HTML table, sources, suggested questions, and AI-determined property type
     """
     try:
         # Validate input
         if not request.question.strip():
             raise HTTPException(status_code=400, detail="Question cannot be empty")
         
-        # Get AI response
+        # Get AI response (AI will determine is_type and type directly)
         response = perplexity_client.ask_question(
             question=request.question,
             user_id=request.user_id
@@ -91,6 +93,10 @@ async def web_search(request: WebSearchRequest) -> WebSearchResponse:
         raw_sources = response.get('sources', [])
         suggested_questions = response.get('suggested_questions', [])
         conversation_context = response.get('conversation_context', 0)
+        
+        # Get AI-determined property type analysis
+        is_type = response.get('is_type', False)
+        property_type = response.get('type', None)
         
         # Ensure valid HTML table
         if not html_table or '<table>' not in html_table:
@@ -123,7 +129,9 @@ async def web_search(request: WebSearchRequest) -> WebSearchResponse:
             source=formatted_sources,
             suggested_questions=suggested_questions,
             user_id=request.user_id,
-            conversation_context=conversation_context
+            conversation_context=conversation_context,
+            is_type=is_type,
+            type=property_type
         )
         
     except HTTPException:
