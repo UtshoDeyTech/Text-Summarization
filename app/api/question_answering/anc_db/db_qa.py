@@ -81,6 +81,93 @@ class AncDBResponse(BaseModel):
     execution_time: float = 0
     filtered_by: str = ""
 
+def format_response_as_html_list(text: str) -> str:
+    """
+    Convert text responses containing multiple items into HTML list format.
+    Detects numbered lists, bullet points, and multiple distinct items.
+    """
+    if not text or len(text.strip()) < 10:
+        return text
+    
+    # Clean the text
+    text = text.strip()
+    
+    # Pattern 1: Detect numbered lists (1. item, 2. item, etc.)
+    numbered_pattern = re.compile(r'^(\d+\.\s+.+?)(?=\n\d+\.|$)', re.MULTILINE | re.DOTALL)
+    numbered_matches = numbered_pattern.findall(text)
+    
+    if len(numbered_matches) >= 2:
+        items = []
+        for match in numbered_matches:
+            # Remove the number and clean the item
+            item = re.sub(r'^\d+\.\s*', '', match.strip())
+            if item:
+                items.append(f"<li>{item}</li>")
+        
+        if items:
+            return f"<ol>{''.join(items)}</ol>"
+    
+    # Pattern 2: Detect bullet points (-, *, •, etc.)
+    bullet_pattern = re.compile(r'^([-*•]\s+.+?)(?=\n[-*•]|$)', re.MULTILINE | re.DOTALL)
+    bullet_matches = bullet_pattern.findall(text)
+    
+    if len(bullet_matches) >= 2:
+        items = []
+        for match in bullet_matches:
+            # Remove the bullet and clean the item
+            item = re.sub(r'^[-*•]\s*', '', match.strip())
+            if item:
+                items.append(f"<li>{item}</li>")
+        
+        if items:
+            return f"<ul>{''.join(items)}</ul>"
+    
+    # Pattern 3: Detect multiple distinct sentences/paragraphs that could be list items
+    # Look for patterns like multiple email addresses, names, or distinct pieces of information
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    
+    # Check if we have multiple lines that look like list items
+    if len(lines) >= 2 and len(lines) <= 10:
+        # Check if lines contain similar structured data (emails, names, addresses, etc.)
+        email_count = sum(1 for line in lines if re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', line))
+        phone_count = sum(1 for line in lines if re.search(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b', line))
+        name_count = sum(1 for line in lines if re.search(r'^[A-Z][a-z]+ [A-Z][a-z]+', line))
+        
+        # If majority of lines contain structured data, format as list
+        if (email_count >= len(lines) * 0.6 or 
+            phone_count >= len(lines) * 0.6 or 
+            name_count >= len(lines) * 0.6 or
+            all(len(line) > 10 and len(line) < 200 for line in lines)):
+            
+            items = [f"<li>{line}</li>" for line in lines]
+            return f"<ul>{''.join(items)}</ul>"
+    
+    # Pattern 4: Detect comma-separated lists that should be converted
+    if ', ' in text and text.count(',') >= 2:
+        # Check if it's a simple comma-separated list
+        parts = [part.strip() for part in text.split(',')]
+        if len(parts) >= 3 and len(parts) <= 15:
+            # Check if parts are similar length and structure (likely a list)
+            avg_length = sum(len(part) for part in parts) / len(parts)
+            if 5 <= avg_length <= 50 and not any('\n' in part for part in parts):
+                items = [f"<li>{part}</li>" for part in parts if part]
+                return f"<ul>{''.join(items)}</ul>"
+    
+    # Pattern 5: Detect "Here are..." or "The following..." patterns
+    list_intro_pattern = re.compile(r'(here are|the following|these are|found|results?)[\s:]+(.*)', re.IGNORECASE | re.DOTALL)
+    intro_match = list_intro_pattern.search(text)
+    
+    if intro_match:
+        intro_text = intro_match.group(1)
+        remaining_text = intro_match.group(2).strip()
+        
+        # Try to format the remaining text as a list
+        formatted_list = format_response_as_html_list(remaining_text)
+        if formatted_list != remaining_text:  # If it was successfully formatted
+            return f"{intro_text.title()}: {formatted_list}"
+    
+    return text
+
 def get_restricted_system_prompt(agent_id: Optional[str], agency_id: Optional[str]) -> str:
     """Create a system prompt that restricts access to only leads tables and customer_master"""
     
@@ -123,6 +210,7 @@ INSTRUCTIONS:
 - Focus on customer information: names, emails, addresses, phone numbers
 - Use LIKE '%term%' for flexible searching
 - Be efficient - try the most relevant table first
+- When returning multiple items, format them clearly on separate lines
 
 EXAMPLE QUERIES:
 - Emails in home leads: "SELECT email, contact_email FROM home_leads WHERE agent_id = 'value' AND email IS NOT NULL"
@@ -133,6 +221,7 @@ RESPONSE GUIDELINES:
 - If asked about non-leads tables: "I can only help with leads and customer data. Please ask about specific lead types (home, auto, restaurant, etc.) or customer information."
 - Always explain which table(s) you searched
 - Provide specific, useful information when found
+- When returning multiple items (emails, names, addresses), put each on a separate line
 - If no results: "No matching records found in the [table_name] table with your current filters."
 
 Remember: You are restricted to leads tables and customer_master only!"""
@@ -300,6 +389,7 @@ Search ONLY in these allowed tables for the answer:
 
 Apply the filtering rules if tables have agent_id/agency_id columns.
 Focus on customer information: names, emails, addresses, phone numbers.
+When returning multiple items, put each item on a separate line for better formatting.
 
 Format your response as:
 ANSWER: [Your specific answer with data found]
@@ -345,6 +435,9 @@ SUGGESTED_QUESTIONS:
                 answer = result.strip()
                 suggestions = []
             
+            # Format the answer as HTML list if it contains multiple items
+            formatted_answer = format_response_as_html_list(answer)
+            
             # Ensure we have 3 suggestions related to leads data
             default_suggestions = [
                 "What other customer information is available in this lead type?",
@@ -354,7 +447,7 @@ SUGGESTED_QUESTIONS:
             while len(suggestions) < 3:
                 suggestions.append(default_suggestions[len(suggestions)])
             
-            return answer, suggestions[:3]
+            return formatted_answer, suggestions[:3]
             
         except Exception as e:
             logger.error(f"Error processing restricted question: {e}")
