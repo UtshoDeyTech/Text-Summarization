@@ -12,6 +12,8 @@ import time
 import os
 import re
 from urllib.parse import quote
+from langchain.agents import AgentExecutor
+from langchain_core.agents import AgentAction, AgentFinish
 
 router = APIRouter()
 
@@ -225,7 +227,49 @@ class RestrictedAncDBAgent:
                 return False
         
         return True
-    
+
+    def generate_friendly_response(self, question: str) -> tuple:
+        """Generate a friendly AI response when unable to find the answer"""
+        try:
+            friendly_llm = ChatOpenAI(
+                model_name="gpt-4o-mini",
+                temperature=0.7,
+                max_tokens=200
+            )
+
+            prompt = f"""The user asked: "{question}"
+
+I was unable to find the specific information in the database after searching thoroughly.
+Generate a friendly, helpful response that:
+1. Acknowledges the question
+2. Explains that I need more specific information to help better
+3. Suggests how they can rephrase or be more specific
+4. Remains professional and encouraging
+
+Keep the response concise and under 100 words."""
+
+            response = friendly_llm.invoke(prompt)
+            friendly_answer = response.content if hasattr(response, 'content') else str(response)
+
+            suggestions = [
+                "Can you provide more specific details about what you're looking for?",
+                "Try asking about a specific lead type (home, auto, restaurant, etc.)",
+                "Include specific criteria like date ranges or customer details"
+            ]
+
+            return friendly_answer, suggestions
+
+        except Exception as e:
+            logger.error(f"Error generating friendly response: {e}")
+            return (
+                "I'm having trouble finding the specific information you're looking for. Could you please be more specific about what you'd like to know? This will help me provide you with a better response.",
+                [
+                    "Can you provide more specific details about what you're looking for?",
+                    "Try asking about a specific lead type (home, auto, restaurant, etc.)",
+                    "Include specific criteria like date ranges or customer details"
+                ]
+            )
+
     def process_question(self, question: str) -> tuple:
         try:
             logger.info(f"Processing restricted question: {question}")
@@ -265,8 +309,26 @@ SUGGESTED_QUESTIONS:
 3. [Related question about other lead types]
 """
             
-            response = self.agent.invoke({"input": prompt})
-            result = response["output"] if isinstance(response, dict) else str(response)
+            try:
+                response = self.agent.invoke({"input": prompt})
+                result = response["output"] if isinstance(response, dict) else str(response)
+            except Exception as agent_error:
+                # Check if the error is related to MAX_ITERATIONS being reached or timeout
+                error_str = str(agent_error).lower()
+                if (
+                    "maximum iterations" in error_str or
+                    "max iterations" in error_str or
+                    "iteration limit" in error_str or
+                    "agent stopped due to iteration limit" in error_str or
+                    "too many iterations" in error_str or
+                    "timeout" in error_str or
+                    "execution time" in error_str
+                ):
+                    logger.info(f"MAX_ITERATIONS or timeout reached for question: {question}")
+                    return self.generate_friendly_response(question)
+                else:
+                    # Re-raise other types of errors
+                    raise agent_error
             
             # Parse the response
             if "SUGGESTED_QUESTIONS:" in result:
@@ -296,14 +358,8 @@ SUGGESTED_QUESTIONS:
             
         except Exception as e:
             logger.error(f"Error processing restricted question: {e}")
-            return (
-                f"I encountered an error while searching the leads data: {str(e)}",
-                [
-                    "Try asking about a specific lead type (home, auto, restaurant)",
-                    "Ask for customer emails or contact information",
-                    "Try rephrasing your question about leads data"
-                ]
-            )
+            # For any other unexpected errors, use the friendly response
+            return self.generate_friendly_response(question)
 
 # Global agent management
 _restricted_agents = {}
