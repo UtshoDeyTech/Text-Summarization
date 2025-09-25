@@ -13,7 +13,7 @@ class WebSearchRequest(BaseModel):
 
 class WebSearchResponse(BaseModel):
     question: str
-    table: str
+    answer: str
     answer_json: Optional[dict] = None
     source: List[str]
     suggested_questions: List[str]
@@ -192,7 +192,7 @@ async def web_search(request: WebSearchRequest) -> WebSearchResponse:
         
         return WebSearchResponse(
             question=request.question,
-            table=html_table,
+            answer=html_table,
             answer_json=answer_json,
             source=formatted_sources,
             suggested_questions=suggested_questions,
