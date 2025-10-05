@@ -241,15 +241,18 @@ class RestrictedAncDBAgent:
         os.environ['OPENAI_API_KEY'] = OPENAI_API_KEY
         
     def build_connection_url(self) -> str:
+        """Build database connection URL from environment variables"""
         if all([DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT]):
             logger.info(f"Using configured database: {DB_HOST}")
             encoded_password = quote(DB_PASSWORD)
             return f"mysql+pymysql://{DB_USER}:{encoded_password}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
         else:
-            logger.warning("Database config incomplete, using fallback connection")
-            return "mysql+pymysql://mypolicylistdb:Anc!2024@174.138.44.203:3306/mypolicylistdb?charset=utf8mb4"
+            # Log the error internally but don't expose details
+            logger.error("Database configuration is incomplete. Missing required environment variables.")
+            raise ValueError("Database configuration error")
     
     def test_connection(self) -> bool:
+        """Test database connection and verify allowed tables"""
         try:
             self.db = SQLDatabase.from_uri(self.connection_url)
             # Verify only allowed tables are accessible
@@ -512,16 +515,38 @@ async def ask_ancdb_restricted(input_data: AncDBInput):
             execution_time=execution_time,
             filtered_by=filtered_by
         )
+    
+    except ValueError as ve:
+        # Handle database configuration errors
+        execution_time = time.time() - start_time
+        logger.error(f"Configuration error: {str(ve)}")
+        
+        return AncDBResponse(
+            question=input_data.question,
+            answer="We're experiencing technical difficulties at the moment. Please try again later or contact support if the issue persists.",
+            sources=[],
+            suggested_questions=[
+                "Please refresh and try your question again",
+                "Contact support for assistance",
+                "Check back in a few moments"
+            ],
+            model_used="GPT-4o-mini (Restricted Mode)", 
+            status_code="503",
+            found=False,
+            execution_time=round(execution_time, 2),
+            filtered_by="Service temporarily unavailable"
+        )
         
     except HTTPException:
         raise
+        
     except Exception as e:
         execution_time = time.time() - start_time
         logger.error(f"Error in restricted endpoint: {str(e)}")
         
         return AncDBResponse(
             question=input_data.question,
-            answer="I can only help with leads and customer data. Please ask about specific lead types (home, auto, restaurant, etc.) or customer information.",
+            answer="I'm currently unable to process your request. Please try again in a moment.",
             sources=[],
             suggested_questions=[
                 "What customer emails are in home leads?",
