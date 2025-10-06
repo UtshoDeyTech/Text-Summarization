@@ -29,10 +29,10 @@ class PerplexityClient:
             model (str): The model to use (default: "sonar-pro")
             
         Returns:
-            Dict[str, Any]: Dictionary containing HTML table, sources, suggested questions, and conversation context
+            Dict[str, Any]: Dictionary containing HTML table, sources, suggested questions, property type info, and conversation context
         """
         
-        # Smart system prompt that adapts based on question type and context
+        # Simple system prompt - let AI naturally handle property type detection
         system_prompt = """You are a real estate expert. Always respond with comprehensive property information in this EXACT detailed HTML table format:
 
 <table><thead><tr><th>Category</th><th>Details</th></tr></thead><tbody>
@@ -70,7 +70,9 @@ COMPARISON HANDLING:
 - Include property A vs property B details, key differences, investment implications
 - Reference specific details from previous queries in your response
 
-Keep table structure raw HTML without any CSS styling or style attributes. Use only <strong> tags for category headers."""
+Keep table structure raw HTML without any CSS styling or style attributes. Use only <strong> tags for category headers.
+
+Note: If the property clearly matches one of these types: ["Home", "Auto", "Gas Station", "Restaurant", "Salon", "General Contractor", "Shopping Mall", "General Business", "Hotel/Motel"], please note this in your analysis."""
 
         # Build messages with conversation history
         messages = [{"role": "system", "content": system_prompt}]
@@ -521,7 +523,9 @@ Keep table structure raw HTML without any CSS styling or style attributes. Use o
             ],
             "summary": f"Error: {error_msg}",
             "raw_response": error_msg,
-            "conversation_context": 0
+            "conversation_context": 0,
+            "is_type": False,
+            "type": None
         }
     
     def get_conversation_history(self, user_id: str) -> List[Dict[str, Any]]:

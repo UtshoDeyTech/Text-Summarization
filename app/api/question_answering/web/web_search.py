@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from app.service.perplexity_client import perplexity_client
 from typing import Optional, List
 import re
+from bs4 import BeautifulSoup
 
 router = APIRouter()
 
@@ -13,10 +14,13 @@ class WebSearchRequest(BaseModel):
 class WebSearchResponse(BaseModel):
     question: str
     answer: str
+    answer_json: Optional[dict] = None
     source: List[str]
     suggested_questions: List[str]
     user_id: Optional[str] = None
     conversation_context: int = 0
+    is_type: bool = False
+    type: Optional[str] = None
 
 class ConversationHistoryResponse(BaseModel):
     user_id: str
@@ -64,6 +68,43 @@ def format_sources(sources: List[str]) -> List[str]:
     
     return formatted
 
+def parse_html_table(html_table: str) -> Optional[dict]:
+    """Parse HTML table into a nested JSON grouped by section headers"""
+    if not html_table:
+        return None
+
+    soup = BeautifulSoup(html_table, 'html.parser')
+    table = soup.find('table')
+    if not table:
+        return None
+
+    result = {}
+    current_section = None
+
+    for row in table.find_all('tr'):
+        cells = [cell.get_text(strip=True) for cell in row.find_all(['td', 'th'])]
+        
+        if not cells:
+            continue
+
+        # If row has a single cell spanning columns → section header
+        if len(cells) == 1 or (len(row.find_all('td')) == 1 and row.find('td').has_attr("colspan")):
+            current_section = cells[0]
+            result[current_section] = {}
+            continue
+
+        # If inside a section, map key/value pairs
+        if current_section:
+            if len(cells) == 2:
+                key, value = cells
+                result[current_section][key] = value
+            elif len(cells) == 3:
+                # In case of "Category | Detail | Value" style
+                key, detail, value = cells
+                result[current_section][f"{key} - {detail}"] = value
+
+    return result if result else None
+
 @router.post("/web-search")
 async def web_search(request: WebSearchRequest) -> WebSearchResponse:
     """
@@ -73,14 +114,14 @@ async def web_search(request: WebSearchRequest) -> WebSearchResponse:
         request: WebSearchRequest with question and optional user_id
         
     Returns:
-        WebSearchResponse with HTML table, sources, and suggested questions
+        WebSearchResponse with HTML table, sources, suggested questions, and AI-determined property type
     """
     try:
         # Validate input
         if not request.question.strip():
             raise HTTPException(status_code=400, detail="Question cannot be empty")
         
-        # Get AI response
+        # Get AI response (AI will determine is_type and type directly)
         response = perplexity_client.ask_question(
             question=request.question,
             user_id=request.user_id
@@ -92,9 +133,41 @@ async def web_search(request: WebSearchRequest) -> WebSearchResponse:
         suggested_questions = response.get('suggested_questions', [])
         conversation_context = response.get('conversation_context', 0)
         
+        # Initialize type variables
+        is_type = False
+        property_type = None
+        
         # Ensure valid HTML table
         if not html_table or '<table>' not in html_table:
             html_table = '<table><thead><tr><th>Category</th><th>Detail</th><th>Value</th></tr></thead><tbody><tr><td>Information</td><td>Status</td><td>No property information available</td></tr></tbody></table>'
+        
+        # Parse HTML table to JSON
+        answer_json = parse_html_table(html_table)
+        
+        # Check for type in parsed JSON and override if present
+        if answer_json:
+            property_details_section = None
+            for key in answer_json:
+                if key.lower() == 'property details':
+                    property_details_section = answer_json[key]
+                    break
+            
+            if property_details_section:
+                type_key = None
+                for key in property_details_section:
+                    if key.lower() in ['type', 'property type']:
+                        type_key = key
+                        break
+                
+                if type_key:
+                    json_type_string = property_details_section[type_key]
+                    if json_type_string:
+                        allowed_types = ["Home", "Auto", "Gas Station", "Restaurant", "Salon", "General Contractor", "Shopping Mall", "General Business", "Hotel/Motel"]
+                        for t in allowed_types:
+                            if t.lower() in json_type_string.lower():
+                                property_type = t
+                                is_type = True
+                                break
         
         # Format sources - ensure we always have sources
         if raw_sources and len(raw_sources) > 0 and raw_sources[0] != "Sources: Real estate databases":
@@ -120,10 +193,13 @@ async def web_search(request: WebSearchRequest) -> WebSearchResponse:
         return WebSearchResponse(
             question=request.question,
             answer=html_table,
+            answer_json=answer_json,
             source=formatted_sources,
             suggested_questions=suggested_questions,
             user_id=request.user_id,
-            conversation_context=conversation_context
+            conversation_context=conversation_context,
+            is_type=is_type,
+            type=property_type
         )
         
     except HTTPException:
