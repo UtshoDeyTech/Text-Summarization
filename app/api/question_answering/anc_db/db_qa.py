@@ -786,6 +786,107 @@ async def health_check():
         "timestamp": time.time()
     }
 
+# Database connection check endpoint
+@router.get("/db-connection-check")
+async def check_database_connection():
+    """
+    Check database connectivity and verify table access
+    
+    Returns connection status, available tables, and configuration details
+    """
+    start_time = time.time()
+    
+    try:
+        logger.info("[DB CHECK] Starting database connection check...")
+        
+        # Build connection URL
+        if not all([DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT]):
+            missing_vars = []
+            if not DB_HOST: missing_vars.append("DB_HOST")
+            if not DB_USER: missing_vars.append("DB_USER")
+            if not DB_PASSWORD: missing_vars.append("DB_PASSWORD")
+            if not DB_NAME: missing_vars.append("DB_NAME")
+            if not DB_PORT: missing_vars.append("DB_PORT")
+            
+            logger.error(f"[DB CHECK] Missing configuration: {', '.join(missing_vars)}")
+            return {
+                "status": "failed",
+                "error": "Database configuration incomplete",
+                "missing_variables": missing_vars,
+                "timestamp": time.time(),
+                "execution_time": round(time.time() - start_time, 3)
+            }
+        
+        # Build connection URL
+        encoded_password = quote(DB_PASSWORD)
+        connection_url = f"mysql+pymysql://{DB_USER}:{encoded_password}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
+        
+        # Test connection
+        logger.info("[DB CHECK] Attempting database connection...")
+        db = SQLDatabase.from_uri(connection_url)
+        
+        # Get all tables
+        all_tables = db.get_usable_table_names()
+        logger.info(f"[DB CHECK] Found {len(all_tables)} total tables in database")
+        
+        # Check which allowed tables are available
+        available_lead_tables = {}
+        for lead_type, table_name in ALLOWED_TABLES.items():
+            if table_name in all_tables:
+                available_lead_tables[lead_type] = {
+                    "status": "accessible"
+                }
+            else:
+                available_lead_tables[lead_type] = {
+                    "status": "not_found"
+                }
+        
+        # Count accessible vs inaccessible
+        accessible_count = sum(1 for v in available_lead_tables.values() if v["status"] == "accessible")
+        inaccessible_count = len(available_lead_tables) - accessible_count
+        
+        connection_time = round(time.time() - start_time, 3)
+        
+        logger.info(f"[DB CHECK] Connection successful! {accessible_count}/{len(ALLOWED_TABLES)} lead tables accessible")
+        
+        return {
+            "status": "success",
+            "connection": {
+                "connected": True,
+                "message": "Database connection successful"
+            },
+            "tables": {
+                "total_in_database": len(all_tables),
+                "configured_lead_types": len(ALLOWED_TABLES),
+                "accessible_lead_tables": accessible_count,
+                "inaccessible_lead_tables": inaccessible_count,
+                "lead_type_status": available_lead_tables
+            },
+            "configuration": {
+                "max_iterations": SecurityConfig.MAX_ITERATIONS,
+                "max_execution_time": SecurityConfig.MAX_EXECUTION_TIME,
+                "max_query_length": SecurityConfig.MAX_QUERY_LENGTH
+            },
+            "timestamp": time.time(),
+            "execution_time": connection_time
+        }
+        
+    except Exception as e:
+        connection_time = round(time.time() - start_time, 3)
+        logger.error(f"[DB CHECK] Connection check failed: {type(e).__name__}: {str(e)}")
+        
+        return {
+            "status": "failed",
+            "connection": {
+                "connected": False,
+                "message": "Database connection failed"
+            },
+            "error": "Unable to connect to database",
+            "error_type": type(e).__name__,
+            "timestamp": time.time(),
+            "execution_time": connection_time
+        }
+
 # Optional: Add an endpoint to list valid lead types
 @router.get("/lead-types")
 async def get_lead_types():
