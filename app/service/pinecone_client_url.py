@@ -34,6 +34,8 @@ def initialize_url_pinecone():
 def get_url_namespaces() -> list:
     """Get all URL namespaces"""
     try:
+
+        
         index = initialize_url_pinecone()
         stats = index.describe_index_stats()
         url_namespaces = list(stats.namespaces.keys())
