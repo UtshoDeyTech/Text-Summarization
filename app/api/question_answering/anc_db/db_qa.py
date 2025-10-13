@@ -905,3 +905,76 @@ async def ask_ancdb_restricted(input_data: AncDBInput):
             filtered_by=f"Error: {type(e).__name__}",
             lead_type=input_data.lead_type if hasattr(input_data, 'lead_type') else ""
         )
+
+class DBConnectionResponse(BaseModel):
+    status: str
+    message: str
+    tables_summary: dict = {}
+    execution_time: float = 0
+
+@router.get("/db-connection", response_model=DBConnectionResponse)
+async def check_db_connection():
+    """Check database connection and table access status"""
+    start_time = time.time()
+    
+    try:
+        logger.info("[DB CHECK] Starting database connection check")
+        
+        if not all([DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT]):
+            return DBConnectionResponse(
+                status="disconnected",
+                message="Database configuration incomplete",
+                execution_time=round(time.time() - start_time, 3)
+            )
+        
+        encoded_password = quote(DB_PASSWORD)
+        connection_url = f"mysql+pymysql://{DB_USER}:{encoded_password}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
+        
+        all_tables = list(ALLOWED_TABLES.values()) + ["customer_master"]
+        
+        db = SQLDatabase.from_uri(connection_url, include_tables=all_tables)
+        usable_tables = db.get_usable_table_names()
+        
+        # Check access for each table
+        readable = 0
+        writable = 0
+        
+        for table_name in all_tables:
+            if table_name in usable_tables:
+                try:
+                    db._execute(f"SELECT 1 FROM {table_name} LIMIT 1")
+                    readable += 1
+                except:
+                    pass
+        
+        # Check write access
+        try:
+            result = db._execute("SHOW GRANTS")
+            for row in result:
+                grant_text = str(row[0]).upper()
+                if ("INSERT" in grant_text or "UPDATE" in grant_text or "ALL PRIVILEGES" in grant_text):
+                    writable = len(all_tables)
+                    break
+        except:
+            pass
+        
+        execution_time = round(time.time() - start_time, 3)
+        
+        return DBConnectionResponse(
+            status="connected",
+            message=f"Connected successfully. {readable}/{len(all_tables)} readable, {writable}/{len(all_tables)} writable",
+            tables_summary={
+                "total": len(all_tables),
+                "readable": readable,
+                "writable": writable
+            },
+            execution_time=execution_time
+        )
+        
+    except Exception as e:
+        logger.error(f"[DB CHECK] Connection failed: {str(e)}")
+        return DBConnectionResponse(
+            status="disconnected",
+            message="Database connection failed",
+            execution_time=round(time.time() - start_time, 3)
+        )
