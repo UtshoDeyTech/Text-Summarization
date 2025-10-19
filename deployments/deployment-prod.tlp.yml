@@ -30,10 +30,16 @@ spec:
               value: "PERPLEXITY_API_KEY_PLACEHOLDER"
             - name: OPENAI_API_KEY
               value: "OPENAI_API_KEY_PLACEHOLDER"
-            - name: PINECONE_API_KEY
-              value: "PINECONE_API_KEY_PLACEHOLDER"
-            - name: PINECONE_ENVIRONMENT
-              value: "PINECONE_ENVIRONMENT_PLACEHOLDER"
+            - name: QDRANT_URL
+              value: "QDRANT_URL_PLACEHOLDER"
+            - name: QDRANT_API_KEY
+              value: "QDRANT_API_KEY_PLACEHOLDER"
+            - name: QDRANT_COLLECTION_NAME
+              value: "QDRANT_COLLECTION_NAME_PLACEHOLDER"
+            - name: QDRANT_USE_HTTPS
+              value: "QDRANT_USE_HTTPS_PLACEHOLDER"
+            - name: QDRANT_TIMEOUT
+              value: "QDRANT_TIMEOUT_PLACEHOLDER"
             - name: S3_REGION_NAME
               value: "S3_REGION_NAME_PLACEHOLDER"
             - name: S3_END_POINT_URL
@@ -52,12 +58,6 @@ spec:
               value: "SEQ_URL_PLACEHOLDER"
             - name: SEQ_API_KEY
               value: "SEQ_API_KEY_PLACEHOLDER"
-            - name: PINECONE_CLIENT_INDEX
-              value: "PINECONE_CLIENT_INDEX_PLACEHOLDER"
-            - name: PINECONE_ANC_INDEX
-              value: "PINECONE_ANC_INDEX_PLACEHOLDER"
-            - name: PINECONE_GLOBAL_INDEX
-              value: "PINECONE_GLOBAL_INDEX_PLACEHOLDER"
             - name: AI_VALUE_ASP
               value: AI_VALUE_ASP_PLACEHOLDER
             - name: ASP_BACKEND_URL

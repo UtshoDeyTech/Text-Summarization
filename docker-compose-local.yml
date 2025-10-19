@@ -1,0 +1,38 @@
+version: "3.9"
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    environment:
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+    restart: unless-stopped
+    networks:
+      - app_network
+
+  backend:
+    build: .
+    container_name: fastapi-playwright
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    volumes:
+      - .:/app
+    networks:
+      - app_network
+    depends_on:
+      - qdrant
+
+volumes:
+  qdrant_storage:
+
+networks:
+  app_network:
+    driver: bridge

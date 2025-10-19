@@ -72,8 +72,11 @@ stages:
               sed -i 's|TEST_VAL_PLACEHOLDER|$(TestVal)|g' ./deployments/deployment-dev.yml
               sed -i 's|OPENAI_API_KEY_PLACEHOLDER|$(OPENAI_API_KEY)|g' ./deployments/deployment-dev.yml
               sed -i 's|PERPLEXITY_API_KEY_PLACEHOLDER|$(PERPLEXITY_API_KEY)|g' ./deployments/deployment-dev.yml
-              sed -i 's|PINECONE_API_KEY_PLACEHOLDER|$(PINECONE_API_KEY)|g' ./deployments/deployment-dev.yml
-              sed -i 's|PINECONE_ENVIRONMENT_PLACEHOLDER|$(PINECONE_ENVIRONMENT)|g' ./deployments/deployment-dev.yml
+              sed -i 's|QDRANT_URL_PLACEHOLDER|$(QDRANT_URL)|g' ./deployments/deployment-dev.yml
+              sed -i 's|QDRANT_API_KEY_PLACEHOLDER|$(QDRANT_API_KEY)|g' ./deployments/deployment-dev.yml
+              sed -i 's|QDRANT_COLLECTION_NAME_PLACEHOLDER|$(QDRANT_COLLECTION_NAME)|g' ./deployments/deployment-dev.yml
+              sed -i 's|QDRANT_USE_HTTPS_PLACEHOLDER|$(QDRANT_USE_HTTPS)|g' ./deployments/deployment-dev.yml
+              sed -i 's|QDRANT_TIMEOUT_PLACEHOLDER|$(QDRANT_TIMEOUT)|g' ./deployments/deployment-dev.yml
               sed -i 's|S3_REGION_NAME_PLACEHOLDER|$(S3_REGION_NAME)|g' ./deployments/deployment-dev.yml
               sed -i 's|S3_END_POINT_URL_PLACEHOLDER|$(S3_END_POINT_URL)|g' ./deployments/deployment-dev.yml
               sed -i 's|S3_ACCESS_KEY_PLACEHOLDER|$(S3_ACCESS_KEY)|g' ./deployments/deployment-dev.yml
@@ -83,9 +86,6 @@ stages:
               sed -i 's|DEVELOPMENT_MODE_PLACEHOLDER|$(DEVELOPMENT_MODE)|g' ./deployments/deployment-dev.yml
               sed -i 's|SEQ_URL_PLACEHOLDER|$(SEQ_URL)|g' ./deployments/deployment-dev.yml
               sed -i 's|SEQ_API_KEY_PLACEHOLDER|$(SEQ_API_KEY)|g' ./deployments/deployment-dev.yml
-              sed -i 's|PINECONE_CLIENT_INDEX_PLACEHOLDER|$(PINECONE_CLIENT_INDEX)|g' ./deployments/deployment-dev.yml
-              sed -i 's|PINECONE_ANC_INDEX_PLACEHOLDER|$(PINECONE_ANC_INDEX)|g' ./deployments/deployment-dev.yml
-              sed -i 's|PINECONE_GLOBAL_INDEX_PLACEHOLDER|$(PINECONE_GLOBAL_INDEX)|g' ./deployments/deployment-dev.yml
               sed -i 's|AI_VALUE_ASP_PLACEHOLDER|$(AI_VALUE_ASP)|g' ./deployments/deployment-dev.yml
               sed -i 's|ASP_BACKEND_URL_PLACEHOLDER|$(ASP_BACKEND_URL)|g' ./deployments/deployment-dev.yml
               sed -i 's|LOG_ENVIROMENT_PLACEHOLDER|$(LOG_ENVIROMENT)|g' ./deployments/deployment-dev.yml
@@ -159,8 +159,11 @@ stages:
               sed -i 's|TEST_VAL_PLACEHOLDER|$(TestVal)|g' ./deployments/deployment-prod.yml
               sed -i 's|OPENAI_API_KEY_PLACEHOLDER|$(OPENAI_API_KEY)|g' ./deployments/deployment-prod.yml
               sed -i 's|PERPLEXITY_API_KEY_PLACEHOLDER|$(PERPLEXITY_API_KEY)|g' ./deployments/deployment-prod.yml
-              sed -i 's|PINECONE_API_KEY_PLACEHOLDER|$(PINECONE_API_KEY)|g' ./deployments/deployment-prod.yml
-              sed -i 's|PINECONE_ENVIRONMENT_PLACEHOLDER|$(PINECONE_ENVIRONMENT)|g' ./deployments/deployment-prod.yml
+              sed -i 's|QDRANT_URL_PLACEHOLDER|$(QDRANT_URL)|g' ./deployments/deployment-prod.yml
+              sed -i 's|QDRANT_API_KEY_PLACEHOLDER|$(QDRANT_API_KEY)|g' ./deployments/deployment-prod.yml
+              sed -i 's|QDRANT_COLLECTION_NAME_PLACEHOLDER|$(QDRANT_COLLECTION_NAME)|g' ./deployments/deployment-prod.yml
+              sed -i 's|QDRANT_USE_HTTPS_PLACEHOLDER|$(QDRANT_USE_HTTPS)|g' ./deployments/deployment-prod.yml
+              sed -i 's|QDRANT_TIMEOUT_PLACEHOLDER|$(QDRANT_TIMEOUT)|g' ./deployments/deployment-prod.yml
               sed -i 's|S3_REGION_NAME_PLACEHOLDER|$(S3_REGION_NAME)|g' ./deployments/deployment-prod.yml
               sed -i 's|S3_END_POINT_URL_PLACEHOLDER|$(S3_END_POINT_URL)|g' ./deployments/deployment-prod.yml
               sed -i 's|S3_ACCESS_KEY_PLACEHOLDER|$(S3_ACCESS_KEY)|g' ./deployments/deployment-prod.yml
@@ -170,13 +173,10 @@ stages:
               sed -i 's|DEVELOPMENT_MODE_PLACEHOLDER|$(DEVELOPMENT_MODE)|g' ./deployments/deployment-prod.yml
               sed -i 's|SEQ_URL_PLACEHOLDER|$(SEQ_URL)|g' ./deployments/deployment-prod.yml
               sed -i 's|SEQ_API_KEY_PLACEHOLDER|$(SEQ_API_KEY)|g' ./deployments/deployment-prod.yml
-              sed -i 's|PINECONE_CLIENT_INDEX_PLACEHOLDER|$(PINECONE_CLIENT_INDEX)|g' ./deployments/deployment-prod.yml
-              sed -i 's|PINECONE_ANC_INDEX_PLACEHOLDER|$(PINECONE_ANC_INDEX)|g' ./deployments/deployment-prod.yml
-              sed -i 's|PINECONE_GLOBAL_INDEX_PLACEHOLDER|$(PINECONE_GLOBAL_INDEX)|g' ./deployments/deployment-prod.yml
-              sed -i 's|AI_VALUE_ASP_PLACEHOLDER|$(AI_VALUE_ASP)|g' ./deployments/deployment-prod.yml        
-              sed -i 's|ASP_BACKEND_URL_PLACEHOLDER|$(ASP_BACKEND_URL)|g' ./deployments/deployment-prod.yml   
+              sed -i 's|AI_VALUE_ASP_PLACEHOLDER|$(AI_VALUE_ASP)|g' ./deployments/deployment-prod.yml
+              sed -i 's|ASP_BACKEND_URL_PLACEHOLDER|$(ASP_BACKEND_URL)|g' ./deployments/deployment-prod.yml
               sed -i 's|LOG_ENVIROMENT_PLACEHOLDER|$(LOG_ENVIROMENT)|g' ./deployments/deployment-prod.yml
-              sed -i 's|LOG_APP_NAME_PLACEHOLDER|$(LOG_APP_NAME)|g' ./deployments/deployment-prod.yml   
+              sed -i 's|LOG_APP_NAME_PLACEHOLDER|$(LOG_APP_NAME)|g' ./deployments/deployment-prod.yml
               sed -i 's|VALIDATION_DAYS_PLACEHOLDER|$(VALIDATION_DAYS)|g' ./deployments/deployment-prod.yml
               sed -i 's|DB_HOST_PLACEHOLDER|$(DB_HOST)|g' ./deployments/deployment-prod.yml
               sed -i 's|DB_USER_PLACEHOLDER|$(DB_USER)|g' ./deployments/deployment-prod.yml

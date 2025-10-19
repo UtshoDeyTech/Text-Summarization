@@ -251,7 +251,7 @@ async def document_url_upload(
         embedding_duration = time.time() - embedding_start
         logger.info(f"Embedding generation completed | duration_seconds={embedding_duration:.2f}, embeddings={len(embeddings)}")
         
-        # Prepare vectors for Pinecone
+        # Prepare vectors for Qdrant
         base_metadata = {
             "document_id": document_id,
             "filename": filename,
