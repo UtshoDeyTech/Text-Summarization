@@ -5,3 +5,4 @@ env
 api_test.py
 sign_test.py
 get_token_locall.py
+.claude

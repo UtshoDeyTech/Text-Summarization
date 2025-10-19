@@ -21,8 +21,8 @@ router = APIRouter()
 # Security Configuration
 class SecurityConfig:
     MAX_QUERY_LENGTH = 3000
-    MAX_ITERATIONS = 5  # Reduced since we're only querying one table
-    MAX_EXECUTION_TIME = 45
+    MAX_ITERATIONS = 10  # Increased to allow for schema exploration + JOIN operations
+    MAX_EXECUTION_TIME = 60
     RATE_LIMIT_PER_MINUTE = 15
     
     FORBIDDEN_PATTERNS = [
@@ -224,50 +224,108 @@ def format_response_as_html_list(text: str) -> str:
     logger.debug(f"[FORMAT] No formatting pattern matched, returning original text")
     return text
 
-def get_restricted_system_prompt(lead_type: str, table_name: str, agent_id: str, agency_id: str) -> str:
-    """Create a system prompt that restricts access to ONLY the specified lead type table"""
+def get_restricted_system_prompt(lead_type: str, table_name: str, agent_id: str, agency_id: str, table_schema: str) -> str:
+    """Create a system prompt that allows JOIN with customer_master table"""
     
     logger.debug(f"[PROMPT] Generating system prompt for lead_type={lead_type}, table={table_name}")
     
-    filter_clause = f"WHERE agent_id = '{agent_id}' AND agency_id = '{agency_id}'"
+    filter_clause = f"WHERE {table_name}.agent_id = '{agent_id}' AND {table_name}.agency_id = '{agency_id}'"
     
-    return f"""You are a specialized database assistant for {lead_type} leads data ONLY.
+    return f"""You are a specialized database assistant for {lead_type} leads data with access to customer information.
 
-CRITICAL RESTRICTIONS:
-- You can ONLY query the table: {table_name}
-- You MUST ONLY use this ONE table: {table_name}
-- Do NOT query any other tables (not even other lead tables)
-- Do NOT use SHOW TABLES or explore database structure
-- Do NOT use JOIN operations with other tables
-- NEVER mention the table name ({table_name}) in your responses - only refer to "{lead_type} leads"
+AVAILABLE TABLES:
+1. {table_name} - Contains lead-specific data with {table_schema.count('|')} columns
+2. customer_master - Contains customer information (customer_id, agency_id, agent_id, first_name, last_name, email_id, mobile_number, work_number, created_date, updated_date)
+
+TABLE SCHEMA FOR {table_name}:
+{table_schema}
+
+RELATIONSHIP:
+- {table_name}.customer_id = customer_master.customer_id (Foreign Key relationship)
+- ALWAYS use this JOIN when customer names or customer_master data is needed
 
 MANDATORY FILTERING (SECURITY):
-- EVERY SELECT query MUST include: {filter_clause}
+- EVERY query on {table_name} MUST include: {filter_clause}
 - This filtering is REQUIRED for security - never skip it
-- agent_id = '{agent_id}' AND agency_id = '{agency_id}' must be in every WHERE clause
+- When JOINing with customer_master, apply the filter on {table_name}
 
-INSTRUCTIONS:
-1. Only use SELECT queries on {table_name}
-2. ALWAYS apply the mandatory filtering: {filter_clause}
-3. Focus on customer information: names, emails, addresses, phone numbers
-4. Use LIKE '%term%' for flexible text searching
-5. Use LIMIT to avoid returning too many results
-6. When returning multiple items, format them clearly on separate lines
+CRITICAL INSTRUCTIONS FOR HANDLING LARGE TABLE:
+1. ALWAYS use the sql_db_schema tool FIRST to understand available columns before querying
+2. When user asks about ANY field, check the schema to find the exact column name
+3. Use sql_db_schema tool to explore table structure when uncertain about column names
+4. The table has 70-100 columns, so explore the schema to find relevant columns
+5. Look for columns that match the user's question semantically (e.g., "premium" might be in "annual_premium", "monthly_premium", etc.)
+
+QUERY PATTERNS:
+
+1. For customer name searches (e.g., "find email of John", "show data for Sarah"):
+   ```sql
+   SELECT cm.first_name, cm.last_name, l.email, l.contact_email, l.mobile_number
+   FROM {table_name} l
+   INNER JOIN customer_master cm ON l.customer_id = cm.customer_id
+   {filter_clause}
+   AND (cm.first_name LIKE '%name%' OR cm.last_name LIKE '%name%')
+   LIMIT 10
+   ```
+
+2. For general data queries without name search:
+   ```sql
+   SELECT email, contact_email, mobile_number
+   FROM {table_name}
+   {filter_clause}
+   LIMIT 10
+   ```
+
+3. For combined customer and lead information:
+   ```sql
+   SELECT cm.first_name, cm.last_name, cm.email_id as customer_email,
+          l.email as lead_email, l.mobile_number, l.location_address
+   FROM {table_name} l
+   INNER JOIN customer_master cm ON l.customer_id = cm.customer_id
+   {filter_clause}
+   LIMIT 10
+   ```
+
+CRITICAL RULES:
+- Use INNER JOIN when you need customer names or customer_master data
+- ALWAYS include the security filter: {filter_clause}
+- Use LIKE '%term%' for flexible text searching on names
+- Check BOTH cm.first_name and cm.last_name when searching by name
+- Use LIMIT to avoid returning too many results
+- NEVER mention table names in responses - only say "{lead_type} leads" or "customers"
+
+DATA LOCATION GUIDE:
+- Customer names (first_name, last_name): customer_master table
+- Emails: Can be in both tables (email_id in customer_master, email/contact_email in {table_name})
+- Phone numbers: Can be in both tables (mobile_number, work_number in both)
+- Addresses: Primarily in {table_name} (location_address, mailing_address)
+- Dates: created_date, updated_date in both tables
 
 RESPONSE GUIDELINES:
-- If the answer exists: Provide the specific data found
-- If no data found: Generate a friendly, natural message saying no relevant information was found in {lead_type} leads (vary the wording, don't use a template)
-- If query is unclear: Ask for clarification about what specific information they need
-- NEVER mention the table name "{table_name}" - always say "{lead_type} leads" instead
-- Never suggest querying other lead types
+- ALWAYS check the table schema first before writing queries
+- If uncertain about column names, use sql_db_schema to explore
+- Search for columns semantically related to user's question
+- If answer exists: Provide the specific data found with customer names when relevant
+- If column not found in schema: Tell user that specific data field is not available in {lead_type} leads
+- If no data found: Generate a friendly message saying no information was found
+- If query is unclear: Ask for clarification
+- NEVER expose table names or technical details to the user
 - Always explain what you searched for in natural language
+- Format multiple results clearly (one per line or in a structured format)
 
-EXAMPLE QUERIES (use these patterns but don't expose them to users):
-- SELECT email, contact_email FROM {table_name} {filter_clause} AND email IS NOT NULL LIMIT 10
-- SELECT name, first_name, last_name FROM {table_name} {filter_clause} LIMIT 10
-- SELECT location_address, mailing_address FROM {table_name} {filter_clause} LIMIT 10
+WORKFLOW FOR EVERY QUERY:
+1. Analyze the user's question to identify what data they want
+2. Use sql_db_schema tool to check available columns in {table_name}
+3. Find matching columns (exact match or semantic match)
+4. Construct appropriate SELECT query with proper JOIN if needed
+5. Apply mandatory security filters
+6. Execute query and format results
 
-Remember: Refer to the data as "{lead_type} leads" NOT "{table_name}". Keep responses natural and conversational."""
+SECURITY REMINDERS:
+- NEVER query tables other than {table_name} and customer_master
+- ALWAYS apply security filters on {table_name}
+- agent_id = '{agent_id}' AND agency_id = '{agency_id}' must be in WHERE clause for {table_name}
+- Only use SELECT queries - no modifications allowed"""
 
 class RestrictedAncDBAgent:
     def __init__(self, lead_type: str, agent_id: str, agency_id: str):
@@ -287,7 +345,7 @@ class RestrictedAncDBAgent:
         self.agent_id = agent_id.strip()
         self.agency_id = agency_id.strip()
         
-        logger.info(f"[AGENT INIT] Table restricted to: {self.table_name}")
+        logger.info(f"[AGENT INIT] Tables allowed: {self.table_name}, customer_master")
         logger.info(f"[AGENT INIT] Security filters: agent_id={self.agent_id}, agency_id={self.agency_id}")
         
         self.setup_environment()
@@ -326,33 +384,78 @@ class RestrictedAncDBAgent:
             raise ValueError("Database configuration error")
     
     def test_connection(self) -> bool:
-        """Test database connection and verify the specific table exists"""
+        """Test database connection and verify tables exist"""
         logger.info("[DB CONNECTION] Testing database connection...")
         try:
             start_time = time.time()
+            # Include both the lead table and customer_master
             self.db = SQLDatabase.from_uri(
                 self.connection_url,
-                include_tables=[self.table_name]  # Only include the specific table
+                include_tables=[self.table_name, "customer_master"],
+                sample_rows_in_table_info=2  # Show sample data in schema
             )
             connection_time = round(time.time() - start_time, 3)
             
             logger.info(f"[DB CONNECTION] ✓ Database connected successfully in {connection_time}s")
             
-            # Verify the specific table is accessible
+            # Verify tables are accessible
             usable_tables = self.db.get_usable_table_names()
             
-            if self.table_name in usable_tables:
-                logger.info(f"[DB CONNECTION] ✓ Table {self.table_name} is accessible")
+            if self.table_name in usable_tables and "customer_master" in usable_tables:
+                logger.info(f"[DB CONNECTION] ✓ Tables accessible: {self.table_name}, customer_master")
+                
+                # Get and log table schema for the leads table
+                try:
+                    table_info = self.db.get_table_info_no_throw([self.table_name])
+                    column_count = table_info.count('\n')
+                    logger.info(f"[DB CONNECTION] ✓ {self.table_name} has approximately {column_count} columns")
+                    logger.debug(f"[DB CONNECTION] Schema preview: {table_info[:500]}...")
+                except Exception as schema_error:
+                    logger.warning(f"[DB CONNECTION] Could not retrieve schema info: {schema_error}")
+                    
             else:
-                logger.error(f"[DB CONNECTION] ✗ Table {self.table_name} not found in database")
+                missing = []
+                if self.table_name not in usable_tables:
+                    missing.append(self.table_name)
+                if "customer_master" not in usable_tables:
+                    missing.append("customer_master")
+                logger.error(f"[DB CONNECTION] ✗ Tables not found: {', '.join(missing)}")
                 return False
             
-            logger.info(f"[DB CONNECTION] ✓ Connection test passed for {self.table_name}")
+            logger.info(f"[DB CONNECTION] ✓ Connection test passed")
             return True
             
         except Exception as e:
             logger.error(f"[DB CONNECTION] ✗ Database connection failed: {type(e).__name__}: {str(e)}")
             return False
+    
+    def get_table_schema_summary(self) -> str:
+        """Get a formatted summary of the table schema"""
+        try:
+            table_info = self.db.get_table_info_no_throw([self.table_name])
+            
+            # Parse column names from the schema
+            columns = []
+            for line in table_info.split('\n'):
+                # Extract column names (format varies, but typically starts with column name)
+                if line.strip() and not line.strip().startswith('CREATE') and not line.strip().startswith('/*'):
+                    # Try to extract column name (before space, comma, or parenthesis)
+                    match = re.match(r'^\s*`?(\w+)`?\s+', line)
+                    if match:
+                        columns.append(match.group(1))
+            
+            # Format as readable list
+            if columns:
+                schema_summary = "Available columns:\n" + "\n".join([f"  - {col}" for col in columns[:50]])  # Limit to first 50 for readability
+                if len(columns) > 50:
+                    schema_summary += f"\n  ... and {len(columns) - 50} more columns"
+                return schema_summary
+            else:
+                return table_info[:1000]  # Fallback to raw schema info
+                
+        except Exception as e:
+            logger.error(f"[SCHEMA] Error getting schema summary: {e}")
+            return "Schema information not available"
     
     def initialize_agent(self) -> bool:
         logger.info("[AGENT INIT] Initializing SQL agent...")
@@ -372,9 +475,20 @@ class RestrictedAncDBAgent:
             toolkit = SQLDatabaseToolkit(db=self.db, llm=self.llm)
             logger.info("[AGENT INIT] ✓ Toolkit created")
             
+            # Get table schema summary
+            logger.debug("[AGENT INIT] Retrieving table schema")
+            table_schema = self.get_table_schema_summary()
+            logger.info(f"[AGENT INIT] ✓ Schema retrieved for {self.table_name}")
+            
             logger.debug("[AGENT INIT] Generating system message")
             system_message = SystemMessage(
-                content=get_restricted_system_prompt(self.lead_type, self.table_name, self.agent_id, self.agency_id)
+                content=get_restricted_system_prompt(
+                    self.lead_type, 
+                    self.table_name, 
+                    self.agent_id, 
+                    self.agency_id,
+                    table_schema
+                )
             )
             logger.info("[AGENT INIT] ✓ System message generated")
             
@@ -405,20 +519,20 @@ class RestrictedAncDBAgent:
             
             no_results_llm = ChatOpenAI(
                 model_name="gpt-4o-mini",
-                temperature=0.8,  # Higher temperature for more variety
+                temperature=0.8,
                 max_tokens=150
             )
 
             prompt = f"""The user asked: "{question}" about {self.lead_type} leads.
 
-After searching the database, no relevant information was found.
+After searching the database (including customer information), no relevant information was found.
 
 Generate a friendly, natural, conversational response (2-3 sentences) that:
 1. Acknowledges their question
 2. States that no relevant information was found in {self.lead_type} leads
 3. Encourages them to try a different search or be more specific
 4. Uses varied, natural language (avoid templates)
-5. NEVER mention table names, only refer to "{self.lead_type} leads"
+5. NEVER mention table names
 
 Keep it concise, helpful, and professional."""
 
@@ -430,7 +544,6 @@ Keep it concise, helpful, and professional."""
 
         except Exception as e:
             logger.error(f"[NO RESULTS] Error generating message: {e}")
-            # Fallback to simple message
             return f"I couldn't find any relevant information in your {self.lead_type} leads for that query. Please try rephrasing your question or providing more specific details."
     
     def generate_natural_suggestions(self, question: str, found_data: bool) -> List[str]:
@@ -452,10 +565,10 @@ Generate exactly 3 helpful follow-up questions they might want to ask about {sel
 
 Requirements:
 - Each question should be natural and conversational
-- Focus on {self.lead_type} leads only
-- NEVER mention table names (like "home_leads", "auto_leads", etc.)
-- Only say "{self.lead_type} leads" or just "leads"
-- Make questions specific to customer data (emails, names, addresses, phone numbers, counts)
+- Focus on {self.lead_type} leads and customer information
+- Include questions about customer names, emails, phone numbers, and addresses
+- NEVER mention table names
+- Only say "{self.lead_type} leads" or "customers"
 - Keep each question under 15 words
 - Make them practical and useful
 
@@ -466,15 +579,15 @@ Format: Just list 3 questions, one per line, no numbering."""
             
             # Parse suggestions
             suggestions = [s.strip() for s in suggestions_text.strip().split('\n') if s.strip()]
-            suggestions = [re.sub(r'^\d+[\.\)]\s*', '', s) for s in suggestions]  # Remove numbering if present
-            suggestions = suggestions[:3]  # Ensure only 3
+            suggestions = [re.sub(r'^\d+[\.\)]\s*', '', s) for s in suggestions]
+            suggestions = suggestions[:3]
             
             # Fallback if we don't get 3
             while len(suggestions) < 3:
                 fallback = [
-                    f"How many {self.lead_type} leads do I have?",
-                    f"What contact information is available in my {self.lead_type} leads?",
-                    f"Can you show me customer emails from {self.lead_type} leads?"
+                    f"Show me customer names and emails from {self.lead_type} leads",
+                    f"How many customers do I have in {self.lead_type} leads?",
+                    f"Find contact information for a specific customer name"
                 ]
                 suggestions.append(fallback[len(suggestions)])
             
@@ -483,54 +596,11 @@ Format: Just list 3 questions, one per line, no numbering."""
 
         except Exception as e:
             logger.error(f"[SUGGESTIONS] Error generating suggestions: {e}")
-            # Fallback suggestions
             return [
-                f"How many {self.lead_type} leads do I have?",
-                f"What contact information is available in my {self.lead_type} leads?",
-                f"Can you show me recent {self.lead_type} leads?"
+                f"Show me customer names from {self.lead_type} leads",
+                f"Find email addresses with customer names",
+                f"How many customers are in my {self.lead_type} leads?"
             ]
-        logger.info("[AGENT INIT] Initializing SQL agent...")
-        try:
-            start_time = time.time()
-            
-            logger.debug("[AGENT INIT] Creating ChatOpenAI LLM instance")
-            self.llm = ChatOpenAI(
-                model_name="gpt-4o-mini",
-                temperature=0,
-                max_tokens=2000,
-                request_timeout=SecurityConfig.MAX_EXECUTION_TIME
-            )
-            logger.info(f"[AGENT INIT] ✓ LLM initialized (model: gpt-4o-mini)")
-            
-            logger.debug("[AGENT INIT] Creating SQL Database Toolkit")
-            toolkit = SQLDatabaseToolkit(db=self.db, llm=self.llm)
-            logger.info("[AGENT INIT] ✓ Toolkit created")
-            
-            logger.debug("[AGENT INIT] Generating system message")
-            system_message = SystemMessage(
-                content=get_restricted_system_prompt(self.lead_type, self.table_name, self.agent_id, self.agency_id)
-            )
-            logger.info("[AGENT INIT] ✓ System message generated")
-            
-            logger.debug(f"[AGENT INIT] Creating agent with max_iterations={SecurityConfig.MAX_ITERATIONS}")
-            self.agent = create_sql_agent(
-                llm=self.llm,
-                toolkit=toolkit,
-                verbose=True,
-                agent_type="openai-tools",
-                system_message=system_message,
-                max_iterations=SecurityConfig.MAX_ITERATIONS,
-                handle_parsing_errors=True,
-                early_stopping_method="generate"
-            )
-            
-            init_time = round(time.time() - start_time, 3)
-            logger.info(f"[AGENT INIT] ✓ Agent initialized successfully in {init_time}s")
-            return True
-            
-        except Exception as e:
-            logger.error(f"[AGENT INIT] ✗ Agent initialization failed: {type(e).__name__}: {str(e)}")
-            return False
     
     def process_question(self, question: str) -> tuple:
         logger.info(f"[PROCESS] Processing question: {question[:100]}...")
@@ -538,35 +608,81 @@ Format: Just list 3 questions, one per line, no numbering."""
         logger.info(f"[PROCESS] Security filters: agent_id={self.agent_id}, agency_id={self.agency_id}")
         
         try:
-            # Create focused prompt for the specific lead type only
-            filter_clause = f"agent_id = '{self.agent_id}' AND agency_id = '{self.agency_id}'"
+            filter_clause = f"{self.table_name}.agent_id = '{self.agent_id}' AND {self.table_name}.agency_id = '{self.agency_id}'"
             
             prompt = f"""
 Question: {question}
 
+AVAILABLE TABLES:
+- {self.table_name}: Lead-specific data (has 70-100+ columns - use sql_db_schema to explore)
+- customer_master: Customer information (names, contact details)
+- JOIN ON: {self.table_name}.customer_id = customer_master.customer_id
+
 CRITICAL SECURITY REQUIREMENT:
-- Search ONLY in the {self.table_name} table
-- MUST filter by: WHERE {filter_clause}
-- DO NOT query any other tables
-- These filters are MANDATORY for every query
+- MUST filter {self.table_name} by: WHERE {filter_clause}
+- These filters are MANDATORY for every query on {self.table_name}
 
-Focus on customer information in {self.table_name}: names, emails, addresses, phone numbers.
+IMPORTANT WORKFLOW - FOLLOW THESE STEPS:
+1. FIRST: Use sql_db_schema tool to check what columns exist in {self.table_name}
+2. SECOND: Identify which columns match the user's question (look for semantic matches)
+3. THIRD: Determine if you need customer names (if yes, JOIN with customer_master)
+4. FOURTH: Construct your SELECT query with the correct columns
+5. FIFTH: Apply mandatory security filters
+6. SIXTH: Execute and format results
 
-If the answer exists in {self.table_name} with the required filters, provide it clearly.
-If no data is found in {self.table_name} with the required filters, say "No relevant information found in {self.lead_type} leads for your query."
-If the question is unclear, ask for specific details.
+COLUMN SEARCH STRATEGY:
+- User asks about "premium" → look for columns like: premium, annual_premium, monthly_premium, total_premium
+- User asks about "policy" → look for: policy_number, policy_type, policy_status, policy_start_date
+- User asks about "address" → look for: address, location_address, mailing_address, street_address
+- User asks about "phone" → look for: phone, mobile_number, work_number, contact_number, phone_number
+- User asks about "status" → look for: status, lead_status, policy_status, account_status
+- Be flexible and search semantically, not just exact matches
 
-When returning multiple items, put each item on a separate line.
+QUERY CONSTRUCTION:
+- If question mentions customer NAME: Use INNER JOIN with customer_master
+  Example for "What is the premium for customer John?":
+  ```
+  SELECT cm.first_name, cm.last_name, l.annual_premium, l.monthly_premium
+  FROM {self.table_name} l
+  INNER JOIN customer_master cm ON l.customer_id = cm.customer_id
+  WHERE {filter_clause}
+  AND (cm.first_name LIKE '%John%' OR cm.last_name LIKE '%John%')
+  LIMIT 10
+  ```
 
-Format your response as:
-ANSWER: [Your specific answer with data found from {self.table_name} WHERE {filter_clause}]
+- If question asks about lead data WITHOUT customer name:
+  ```
+  SELECT column1, column2, column3
+  FROM {self.table_name}
+  WHERE {filter_clause}
+  LIMIT 10
+  ```
+
+- If question asks to list customers WITH their lead data:
+  ```
+  SELECT cm.first_name, cm.last_name, l.column1, l.column2
+  FROM {self.table_name} l
+  INNER JOIN customer_master cm ON l.customer_id = cm.customer_id
+  WHERE {filter_clause}
+  LIMIT 10
+  ```
+
+RESPONSE RULES:
+- If column doesn't exist in schema: Politely tell user that specific field is not available
+- If data found: Show it with customer names when relevant
+- If no data found: Say no information found for this query
+- If unclear: Ask for clarification
+- Format multiple results clearly (one per line)
+- NEVER mention table names in your response to the user
+
+Format your final response as:
+ANSWER: [Your specific answer with data]
 SUGGESTED_QUESTIONS:
-1. [Related question about {self.lead_type} leads]
-2. [Another question about {self.lead_type} leads data]
-3. [Third question about {self.lead_type} leads information]
+1. [Related question about available data]
+2. [Another helpful question]
+3. [Third useful question]
 """
             
-            # Create iteration callback
             iteration_callback = IterationLoggingCallback()
             
             logger.info("[AGENT INVOKE] Starting agent execution...")
@@ -598,27 +714,37 @@ SUGGESTED_QUESTIONS:
                 if len(parts) > 1:
                     lines = parts[1].strip().split("\n")
                     for line in lines:
-                        clean = re.sub(r'^\d+\.\s*', '', line.strip())
+                        clean = re.sub(r'^\d+[\.\)]\s*', '', line.strip())
                         if clean and len(suggestions) < 3:
                             suggestions.append(clean)
             else:
                 answer = result.strip()
                 suggestions = []
             
-            # Check if no data was found
-            if not answer or len(answer) < 10 or "no relevant" in answer.lower() or "not found" in answer.lower() or "couldn't find" in answer.lower() or "no information" in answer.lower():
-                logger.warning(f"[PROCESS] No relevant data found in {self.table_name}")
+            # Check if no data was found or column doesn't exist
+            not_found_indicators = [
+                "no relevant", "not found", "couldn't find", "no information",
+                "not available", "doesn't exist", "no such column", "no data"
+            ]
+            
+            if not answer or len(answer) < 10 or any(indicator in answer.lower() for indicator in not_found_indicators):
+                logger.warning(f"[PROCESS] No relevant data found or column unavailable")
                 
-                # Generate AI-powered "no results" message
-                answer = self.generate_no_results_message(question)
-                
-                # Generate contextual suggestions for no results
-                suggestions = self.generate_natural_suggestions(question, found_data=False)
+                # Check if it's a "column not found" vs "no data" scenario
+                if any(term in answer.lower() for term in ["not available", "doesn't exist", "no such column"]):
+                    # Column doesn't exist - keep the agent's explanation
+                    suggestions = [
+                        f"What types of information are available in {self.lead_type} leads?",
+                        f"Show me customer names and contact details",
+                        f"List some sample data from {self.lead_type} leads"
+                    ]
+                else:
+                    # No data found - generate friendly message
+                    answer = self.generate_no_results_message(question)
+                    suggestions = self.generate_natural_suggestions(question, found_data=False)
             else:
-                # Data was found - generate contextual suggestions
                 suggestions = self.generate_natural_suggestions(question, found_data=True)
             
-            # Format the answer as HTML list if it contains multiple items
             formatted_answer = format_response_as_html_list(answer)
             
             logger.info(f"[PROCESS] ✓ Question processed successfully")
@@ -667,13 +793,22 @@ def get_restricted_agent(lead_type: str, agent_id: str, agency_id: str):
 @router.post("/ask-ancdb", response_model=AncDBResponse)
 async def ask_ancdb_restricted(input_data: AncDBInput):
     """
-    Ask questions about specific lead type data with mandatory security filtering
+    Ask questions about specific lead type data with mandatory security filtering.
+    Now supports queries about customer names by joining with customer_master table.
     
     All 4 fields are required:
-    - question: Your query about the leads
+    - question: Your query about the leads or customers (e.g., "what is the email of John?")
     - lead_type: Type of lead (Home, Auto, Restaurant, etc.)
     - agent_id: Your agent ID (required for security)
     - agency_id: Your agency ID (required for security)
+    
+    Examples:
+    - "What is the email address of Utsho?"
+    - "Show me all customer names and their emails"
+    - "Find phone number for Sarah"
+    - "List customers with their contact information"
+    
+    all of these example will be like an Insurance agent is asking some question about his leads.
     """
     start_time = time.time()
     
@@ -704,7 +839,7 @@ async def ask_ancdb_restricted(input_data: AncDBInput):
         return AncDBResponse(
             question=input_data.question,
             answer=answer,
-            sources=[f"{input_data.lead_type} Leads Data"],
+            sources=[f"{input_data.lead_type} Leads Data", "Customer Data"],
             suggested_questions=suggested_questions,
             model_used="gpt-4o-mini",
             status_code="200",
@@ -715,12 +850,10 @@ async def ask_ancdb_restricted(input_data: AncDBInput):
         )
     
     except HTTPException as http_exc:
-        # Re-raise HTTP exceptions as-is
         logger.error(f"[ENDPOINT] HTTP Exception: {http_exc.detail}")
         raise
     
     except ValueError as ve:
-        # Handle validation errors (invalid lead_type, missing IDs, etc.)
         execution_time = round(time.time() - start_time, 2)
         logger.error(f"[ENDPOINT] Validation error: {str(ve)}")
         
@@ -742,12 +875,10 @@ async def ask_ancdb_restricted(input_data: AncDBInput):
         )
     
     except Exception as e:
-        # Handle any other unexpected errors
         execution_time = round(time.time() - start_time, 2)
         logger.error(f"[ENDPOINT] Unexpected error: {type(e).__name__}: {str(e)}")
         logger.debug(f"[ENDPOINT] Stack trace:", exc_info=True)
         
-        # Determine appropriate error message based on error type
         if "connection" in str(e).lower() or "database" in str(e).lower():
             error_message = "We're experiencing database connectivity issues. Please try again in a moment."
             status_code = "503"
@@ -763,9 +894,9 @@ async def ask_ancdb_restricted(input_data: AncDBInput):
             answer=error_message,
             sources=[],
             suggested_questions=[
-                f"Try asking about {input_data.lead_type} leads with more specific criteria",
+                f"Try asking about {input_data.lead_type} leads with customer names",
                 "Ask about customer emails or contact information",
-                "Inquire about the total number of leads available"
+                "Inquire about specific customer details by name"
             ],
             model_used="gpt-4o-mini",
             status_code=status_code,
@@ -775,23 +906,75 @@ async def ask_ancdb_restricted(input_data: AncDBInput):
             lead_type=input_data.lead_type if hasattr(input_data, 'lead_type') else ""
         )
 
-# Optional: Add a health check endpoint
-@router.get("/health")
-async def health_check():
-    """Check if the service is healthy"""
-    return {
-        "status": "healthy",
-        "service": "ANC DB Agent",
-        "mode": "Restricted (Lead Type Specific)",
-        "timestamp": time.time()
-    }
+class DBConnectionResponse(BaseModel):
+    status: str
+    message: str
+    tables_summary: dict = {}
+    execution_time: float = 0
 
-# Optional: Add an endpoint to list valid lead types
-@router.get("/lead-types")
-async def get_lead_types():
-    """Get list of valid lead types"""
-    return {
-        "lead_types": list(ALLOWED_TABLES.keys()),
-        "count": len(ALLOWED_TABLES),
-        "note": "All requests must include: question, lead_type, agent_id, and agency_id"
-    }
+@router.get("/db-connection", response_model=DBConnectionResponse)
+async def check_db_connection():
+    """Check database connection and table access status"""
+    start_time = time.time()
+    
+    try:
+        logger.info("[DB CHECK] Starting database connection check")
+        
+        if not all([DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT]):
+            return DBConnectionResponse(
+                status="disconnected",
+                message="Database configuration incomplete",
+                execution_time=round(time.time() - start_time, 3)
+            )
+        
+        encoded_password = quote(DB_PASSWORD)
+        connection_url = f"mysql+pymysql://{DB_USER}:{encoded_password}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
+        
+        all_tables = list(ALLOWED_TABLES.values()) + ["customer_master"]
+        
+        db = SQLDatabase.from_uri(connection_url, include_tables=all_tables)
+        usable_tables = db.get_usable_table_names()
+        
+        # Check access for each table
+        readable = 0
+        writable = 0
+        
+        for table_name in all_tables:
+            if table_name in usable_tables:
+                try:
+                    db._execute(f"SELECT 1 FROM {table_name} LIMIT 1")
+                    readable += 1
+                except:
+                    pass
+        
+        # Check write access
+        try:
+            result = db._execute("SHOW GRANTS")
+            for row in result:
+                grant_text = str(row[0]).upper()
+                if ("INSERT" in grant_text or "UPDATE" in grant_text or "ALL PRIVILEGES" in grant_text):
+                    writable = len(all_tables)
+                    break
+        except:
+            pass
+        
+        execution_time = round(time.time() - start_time, 3)
+        
+        return DBConnectionResponse(
+            status="connected",
+            message=f"Connected successfully. {readable}/{len(all_tables)} readable, {writable}/{len(all_tables)} writable",
+            tables_summary={
+                "total": len(all_tables),
+                "readable": readable,
+                "writable": writable
+            },
+            execution_time=execution_time
+        )
+        
+    except Exception as e:
+        logger.error(f"[DB CHECK] Connection failed: {str(e)}")
+        return DBConnectionResponse(
+            status="disconnected",
+            message="Database connection failed",
+            execution_time=round(time.time() - start_time, 3)
+        )

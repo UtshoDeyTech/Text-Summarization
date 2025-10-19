@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from app.service.s3_storage import list_objects, S3_BUCKET_NAME, s3_client
 from app.service.log_client import logger
-from app.service.pinecone_client import list_documents_from_pinecone
+from app.service.qdrant_client import list_documents_from_qdrant
 from datetime import datetime
 
 router = APIRouter()
@@ -26,9 +26,9 @@ async def list_documents(request: Request, user_id: str):
     try:
         logger.info(f"Starting document listing | user_id={user_id}")
         
-        # Get documents from Pinecone
-        pinecone_docs = list_documents_from_pinecone(user_id)
-        logger.info(f"Found {len(pinecone_docs)} documents in Pinecone")
+        # Get documents from Qdrant
+        qdrant_docs = list_documents_from_qdrant(user_id)
+        logger.info(f"Found {len(qdrant_docs)} documents in Qdrant")
         
         # Get documents from S3
         s3_docs = []
@@ -52,11 +52,11 @@ async def list_documents(request: Request, user_id: str):
         
         # Combine and deduplicate documents
         all_docs = {}
-        
-        # Add Pinecone documents
-        for doc in pinecone_docs:
+
+        # Add Qdrant documents
+        for doc in qdrant_docs:
             doc_id = doc['id']
-            all_docs[doc_id] = {**doc, "storage_locations": ["pinecone"]}
+            all_docs[doc_id] = {**doc, "storage_locations": ["qdrant"]}
         
         # Add or update with S3 documents
         for doc in s3_docs:

@@ -6,12 +6,12 @@ from urllib.parse import urlparse
 import re
 from typing import List
 from playwright.async_api import async_playwright
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 import PyPDF2
 import docx
 import io
 from app.service.openai_client import get_embeddings
-from app.service.pinecone_client_url import upsert_url_vectors
+from app.service.qdrant_client import upsert_url_vectors
 from app.service.log_client import logger
 
 router = APIRouter()
