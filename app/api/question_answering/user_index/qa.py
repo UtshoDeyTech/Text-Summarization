@@ -6,11 +6,12 @@ import json
 import time
 import hashlib
 from datetime import datetime
-from pinecone import Pinecone
+from app.service.qdrant_client import get_qdrant_client
+from qdrant_client.models import Filter, FieldCondition, MatchValue
 from functools import lru_cache
 from app.service.log_client import logger
 from app.service.openai_client import get_embeddings
-from config import OPENAI_API_KEY, PINECONE_CLIENT_INDEX, PINECONE_API_KEY, MODEL, MAX_CHUNKS, NUM_SUGGESTIONS
+from config import OPENAI_API_KEY, QDRANT_COLLECTION_NAME, MODEL, MAX_CHUNKS, NUM_SUGGESTIONS
 
 router = APIRouter()
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
@@ -190,54 +191,54 @@ async def ask_question(user_id: str, request: QuestionRequest):
 
         # Get embeddings asynchronously
         embeddings = await get_embeddings([request.question])
-        question_embedding = embeddings[0] 
-        
-        # Initialize Pinecone
-        pc = Pinecone(api_key=PINECONE_API_KEY)
-        client_index = pc.Index(PINECONE_CLIENT_INDEX)
-        
-        # Get all namespaces for the user
-        client_namespaces = [ns for ns in client_index.describe_index_stats().namespaces.keys() 
-                            if ns.startswith(f"{user_id}_")]
-        
-        if not client_namespaces:
+        question_embedding = embeddings[0]
+
+        # Connect to Qdrant
+        qdrant_client = get_qdrant_client()
+
+        # Search for similar vectors filtered by user_id
+        try:
+            search_results = qdrant_client.search(
+                collection_name=QDRANT_COLLECTION_NAME,
+                query_vector=question_embedding,
+                limit=MAX_CHUNKS * 3,  # Get more to filter by score
+                score_threshold=0.6,  # Only return matches with score > 0.6
+                with_payload=True,
+                query_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="user_id",
+                            match=MatchValue(value=user_id)
+                        )
+                    ]
+                )
+            )
+        except Exception as e:
+            logger.error(f"Qdrant search error | user_id={user_id}, error={str(e)}")
+            search_results = []
+
+        if not search_results:
             execution_time = round(time.time() - start_time, 2)
             return create_response(user_id, request, "", [], [], False, execution_time, current_sequence)
 
-        # Get matches from all valid namespaces
+        # Filter and sort matches
         all_matches = []
-        
-        for namespace in client_namespaces:
-            # Query each namespace
-            results = client_index.query(
-                vector=question_embedding,
-                top_k=MAX_CHUNKS,
-                namespace=namespace,
-                include_metadata=True
-            )
-            
-            # Process matches for this namespace
-            for match in results.matches:
-                if match.score < 0.6:  # Skip low relevance matches
-                    continue
-                    
-                metadata = match.metadata or {}
-                if not metadata.get("text", "").strip():
-                    continue
-                
+        for match in search_results:
+            metadata = match.payload or {}
+            if metadata.get("text", "").strip():
                 all_matches.append(match)
 
         if not all_matches:
             execution_time = round(time.time() - start_time, 2)
             return create_response(user_id, request, "", [], [], False, execution_time, current_sequence)
 
-        # Sort and process top matches
+        # Sort by score and take top MAX_CHUNKS
         sorted_matches = sorted(all_matches, key=lambda x: x.score, reverse=True)[:MAX_CHUNKS]
-        
+
         # Prepare contexts with complete metadata
         valid_contexts = []
         for match in sorted_matches:
-            metadata = match.metadata or {}
+            metadata = match.payload or {}
             context = {
                 "text": metadata.get("text", ""),
                 "filename": metadata.get("filename", ""),

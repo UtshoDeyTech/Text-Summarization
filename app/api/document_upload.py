@@ -4,11 +4,11 @@ from typing import Optional
 from datetime import datetime
 from PyPDF2 import PdfReader
 from docx import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from io import BytesIO
 from tqdm import tqdm
 from app.service.openai_client import get_embeddings
-from app.service.pinecone_client import (
+from app.service.qdrant_client import (
     upsert_vectors,
     find_document_namespace,
     delete_vectors
@@ -89,9 +89,10 @@ def process_document(file_obj, file_extension):
         logger.error(f"Document processing failed | error_type={type(e).__name__}, error={str(e)}")
         raise
 
-@router.post("/document_url_upload/{document_id}")
+@router.post("/document_url_upload/{user_id}/{document_id}")
 async def document_url_upload(
     request: Request,
+    user_id: str,
     document_id: str,
     document_category: Optional[str] = "Other",
     file: Optional[UploadFile] = File(None),
@@ -219,11 +220,11 @@ async def document_url_upload(
                     }
                 )
         
-        # Check if the document already exists in Pinecone
+        # Check if the document already exists in Qdrant
         namespace = find_document_namespace(document_id)
         if namespace:
             delete_vectors(document_id)
-            logger.info(f"Deleted existing vectors from Pinecone | document_id={document_id}")
+            logger.info(f"Deleted existing vectors from Qdrant | document_id={document_id}")
         
         # Process the document
         processing_start = time.time()
@@ -281,21 +282,21 @@ async def document_url_upload(
                 valid_chunks.append(chunk)
                 valid_embeddings.append(embedding)
         
-        # Upload to Pinecone
-        pinecone_start = time.time()
-        logger.info(f"Starting Pinecone upload | vectors={len(valid_embeddings)}")
-        with tqdm(total=1, desc="Uploading to Pinecone") as pbar:
-            upsert_vectors(valid_embeddings, metadatas, ids, document_id)
+        # Upload to Qdrant
+        qdrant_start = time.time()
+        logger.info(f"Starting Qdrant upload | vectors={len(valid_embeddings)}, user_id={user_id}")
+        with tqdm(total=1, desc="Uploading to Qdrant") as pbar:
+            upsert_vectors(valid_embeddings, metadatas, ids, document_id, user_id=user_id)
             pbar.update(1)
-        pinecone_duration = time.time() - pinecone_start
-        logger.info(f"Pinecone upload completed | duration_seconds={pinecone_duration:.2f}")
+        qdrant_duration = time.time() - qdrant_start
+        logger.info(f"Qdrant upload completed | duration_seconds={qdrant_duration:.2f}")
         
         # Log detailed performance metrics
         if not using_file:
             logger.info(f"Performance metrics | download_time={processing_start - start_time.timestamp():.2f}s, " +
                        f"processing_time={processing_duration:.2f}s, " +
-                       f"embedding_time={embedding_duration:.2f}s, " + 
-                       f"pinecone_time={pinecone_duration:.2f}s")
+                       f"embedding_time={embedding_duration:.2f}s, " +
+                       f"qdrant_time={qdrant_duration:.2f}s")
             if 'total_size' in locals():
                 logger.info(f"File size: {total_size/1024/1024:.2f}MB")
         

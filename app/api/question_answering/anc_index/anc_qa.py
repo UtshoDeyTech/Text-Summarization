@@ -4,10 +4,11 @@ from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
 import json
 import time
-from pinecone import Pinecone
+from app.service.qdrant_client import get_qdrant_client
+from qdrant_client.models import Filter, FieldCondition, MatchValue
 from app.service.log_client import logger
 from app.service.openai_client import get_embeddings
-from config import OPENAI_API_KEY, PINECONE_ANC_INDEX, PINECONE_API_KEY, MODEL, MAX_CHUNKS, NUM_SUGGESTIONS
+from config import OPENAI_API_KEY, QDRANT_COLLECTION_NAME, MODEL, MAX_CHUNKS, NUM_SUGGESTIONS
 
 router = APIRouter()
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
@@ -75,39 +76,38 @@ def create_source_from_metadata(metadata: dict) -> Source:
 async def ask_question(request: QuestionRequest):
     start_time = time.time()
     logger.info(f"Processing question | question={request.question}")
-    
+
     try:
         # Get embeddings asynchronously
         embeddings = await get_embeddings([request.question])
         question_embedding = embeddings[0]
-        
-        pc = Pinecone(api_key=PINECONE_API_KEY)
-        index = pc.Index(PINECONE_ANC_INDEX)
-        
-        stats = index.describe_index_stats()
-        namespaces = list(stats.namespaces.keys() if stats.namespaces else [])
-        
-        # Collect matches from all namespaces with score threshold
-        all_matches = []
-        for namespace in namespaces:
-            try:
-                results = index.query(
-                    vector=question_embedding,
-                    top_k=3,
-                    include_metadata=True,
-                    namespace=namespace,
-                    score_threshold=0.5  # Only return matches with score > 0.5
+
+        # Connect to Qdrant
+        qdrant_client = get_qdrant_client()
+
+        # Search for similar vectors with URL content_type filter (for ANC documents)
+        try:
+            search_results = qdrant_client.search(
+                collection_name=QDRANT_COLLECTION_NAME,
+                query_vector=question_embedding,
+                limit=MAX_CHUNKS * 3,  # Get more results to filter
+                score_threshold=0.5,  # Only return matches with score > 0.5
+                with_payload=True,
+                query_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="content_type",
+                            match=MatchValue(value="url")
+                        )
+                    ]
                 )
-                all_matches.extend(results.matches)
-            except Exception as e:
-                logger.error(f"Namespace query error | namespace={namespace}, error={str(e)}")
-                continue
-        
-        # Sort and take top max_chunks
-        top_matches = []
-        if all_matches:
-            all_matches.sort(key=lambda x: x.score, reverse=True)
-            top_matches = all_matches[:MAX_CHUNKS]
+            )
+        except Exception as e:
+            logger.error(f"Qdrant search error | error={str(e)}")
+            search_results = []
+
+        # Sort by score and take top MAX_CHUNKS
+        top_matches = sorted(search_results, key=lambda x: x.score, reverse=True)[:MAX_CHUNKS]
 
         if not top_matches:
             return QuestionResponse(
@@ -124,12 +124,12 @@ async def ask_question(request: QuestionRequest):
         # Combine context from top matches
         contexts = []
         for match in top_matches:
-            metadata = match.metadata or {}
+            metadata = match.payload or {}
             text = metadata.get("text", "")  # Use full chunk
             contexts.append(f"Context from {metadata.get('document_id')} (similarity: {match.score:.2f}):\n{text}")
-        
+
         combined_context = "\n\n".join(contexts)
-        source = create_source_from_metadata(top_matches[0].metadata)
+        source = create_source_from_metadata(top_matches[0].payload)
         
         # Use async OpenAI client
         response = await client.chat.completions.create(
