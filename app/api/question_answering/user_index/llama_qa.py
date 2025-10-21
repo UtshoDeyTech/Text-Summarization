@@ -5,11 +5,12 @@ from datetime import datetime
 import json
 import time
 import hashlib
-from pinecone import Pinecone
+from app.service.qdrant_client import get_qdrant_client
+from qdrant_client.models import Filter, FieldCondition, MatchValue
 from functools import lru_cache
 from app.service.log_client import logger
 from app.service.openai_client import get_embeddings
-from config import PINECONE_CLIENT_INDEX, PINECONE_API_KEY, MODEL, MAX_CHUNKS, NUM_SUGGESTIONS, LLAMA_URL
+from config import QDRANT_COLLECTION_NAME, MODEL, MAX_CHUNKS, NUM_SUGGESTIONS, LLAMA_URL
 from langchain_ollama import OllamaLLM
 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 
@@ -197,33 +198,36 @@ async def ask_question(user_id: str, request: QuestionRequest):
             return cached_result
 
         embeddings = await get_embeddings([request.question])
-        question_embedding = embeddings[0] 
-        
-        pc = Pinecone(api_key=PINECONE_API_KEY)
-        client_index = pc.Index(PINECONE_CLIENT_INDEX)
-        
-        client_namespaces = [ns for ns in client_index.describe_index_stats().namespaces.keys() 
-                            if ns.startswith(f"{user_id}_")]
-        
-        if not client_namespaces:
-            execution_time = round(time.time() - start_time, 2)
-            return create_response(user_id, request, "", [], [], False, execution_time, current_sequence)
+        question_embedding = embeddings[0]
+
+        # Connect to Qdrant
+        qdrant_client = get_qdrant_client()
+
+        # Search for similar vectors filtered by user_id
+        try:
+            search_results = qdrant_client.search(
+                collection_name=QDRANT_COLLECTION_NAME,
+                query_vector=question_embedding,
+                limit=MAX_CHUNKS * 3,
+                score_threshold=0.6,
+                with_payload=True,
+                query_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="user_id",
+                            match=MatchValue(value=user_id)
+                        )
+                    ]
+                )
+            )
+        except Exception as e:
+            logger.error(f"Qdrant search error | user_id={user_id}, error={str(e)}")
+            search_results = []
 
         all_matches = []
-        for namespace in client_namespaces:
-            results = client_index.query(
-                vector=question_embedding,
-                top_k=MAX_CHUNKS,
-                namespace=namespace,
-                include_metadata=True
-            )
-            
-            for match in results.matches:
-                if match.score < 0.6:
-                    continue
-                metadata = match.metadata or {}
-                if not metadata.get("text", "").strip():
-                    continue
+        for match in search_results:
+            metadata = match.payload or {}
+            if metadata.get("text", "").strip():
                 all_matches.append(match)
 
         if not all_matches:
@@ -231,10 +235,10 @@ async def ask_question(user_id: str, request: QuestionRequest):
             return create_response(user_id, request, "", [], [], False, execution_time, current_sequence)
 
         sorted_matches = sorted(all_matches, key=lambda x: x.score, reverse=True)[:MAX_CHUNKS]
-        
+
         valid_contexts = []
         for match in sorted_matches:
-            metadata = match.metadata or {}
+            metadata = match.payload or {}
             context = {
                 "text": metadata.get("text", ""),
                 "filename": metadata.get("filename", ""),

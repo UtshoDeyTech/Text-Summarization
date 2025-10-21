@@ -39,6 +39,7 @@ playwright/.local-browsers/
 # Exclude sensitive files if present
 .env
 .env.*
+.claude
 
 # Ignore unnecessary Docker files
 docker-compose.override.yml
