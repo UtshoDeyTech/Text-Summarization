@@ -31,6 +31,10 @@ spec:
               value: "PERPLEXITY_API_KEY_PLACEHOLDER"
             - name: QDRANT_URL
               value: "QDRANT_URL_PLACEHOLDER"
+            - name: QDRANT_HOST
+              value: "QDRANT_HOST_PLACEHOLDER"
+            - name: QDRANT_PORT
+              value: "QDRANT_PORT_PLACEHOLDER"
             - name: QDRANT_API_KEY
               value: "QDRANT_API_KEY_PLACEHOLDER"
             - name: QDRANT_COLLECTION_NAME

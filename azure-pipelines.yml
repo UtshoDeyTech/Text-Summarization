@@ -73,6 +73,8 @@ stages:
               sed -i 's|OPENAI_API_KEY_PLACEHOLDER|$(OPENAI_API_KEY)|g' ./deployments/deployment-dev.yml
               sed -i 's|PERPLEXITY_API_KEY_PLACEHOLDER|$(PERPLEXITY_API_KEY)|g' ./deployments/deployment-dev.yml
               sed -i 's|QDRANT_URL_PLACEHOLDER|$(QDRANT_URL)|g' ./deployments/deployment-dev.yml
+              sed -i 's|QDRANT_HOST_PLACEHOLDER|$(QDRANT_HOST)|g' ./deployments/deployment-dev.yml
+              sed -i 's|QDRANT_PORT_PLACEHOLDER|$(QDRANT_PORT)|g' ./deployments/deployment-dev.yml
               sed -i 's|QDRANT_API_KEY_PLACEHOLDER|$(QDRANT_API_KEY)|g' ./deployments/deployment-dev.yml
               sed -i 's|QDRANT_COLLECTION_NAME_PLACEHOLDER|$(QDRANT_COLLECTION_NAME)|g' ./deployments/deployment-dev.yml
               sed -i 's|QDRANT_USE_HTTPS_PLACEHOLDER|$(QDRANT_USE_HTTPS)|g' ./deployments/deployment-dev.yml
@@ -160,6 +162,8 @@ stages:
               sed -i 's|OPENAI_API_KEY_PLACEHOLDER|$(OPENAI_API_KEY)|g' ./deployments/deployment-prod.yml
               sed -i 's|PERPLEXITY_API_KEY_PLACEHOLDER|$(PERPLEXITY_API_KEY)|g' ./deployments/deployment-prod.yml
               sed -i 's|QDRANT_URL_PLACEHOLDER|$(QDRANT_URL)|g' ./deployments/deployment-prod.yml
+              sed -i 's|QDRANT_HOST_PLACEHOLDER|$(QDRANT_HOST)|g' ./deployments/deployment-prod.yml
+              sed -i 's|QDRANT_PORT_PLACEHOLDER|$(QDRANT_PORT)|g' ./deployments/deployment-prod.yml
               sed -i 's|QDRANT_API_KEY_PLACEHOLDER|$(QDRANT_API_KEY)|g' ./deployments/deployment-prod.yml
               sed -i 's|QDRANT_COLLECTION_NAME_PLACEHOLDER|$(QDRANT_COLLECTION_NAME)|g' ./deployments/deployment-prod.yml
               sed -i 's|QDRANT_USE_HTTPS_PLACEHOLDER|$(QDRANT_USE_HTTPS)|g' ./deployments/deployment-prod.yml
