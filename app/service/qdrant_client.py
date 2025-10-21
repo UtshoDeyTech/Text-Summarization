@@ -22,19 +22,29 @@ def get_qdrant_client():
     try:
         # Priority 1: Use QDRANT_URL if provided (for production/cloud deployments)
         if QDRANT_URL:
-            logger.info(f"Connecting to Qdrant using URL | url={QDRANT_URL}")
-            # Remove trailing slash if present
-            clean_url = QDRANT_URL.rstrip('/')
+            # Parse URL to extract host and determine if HTTPS
+            from urllib.parse import urlparse
+            parsed = urlparse(QDRANT_URL)
+            host = parsed.hostname or QDRANT_HOST
+            port = parsed.port or QDRANT_PORT
+            use_https = parsed.scheme == 'https' or QDRANT_USE_HTTPS
+
+            logger.info(f"Connecting to Qdrant | host={host}, port={port}, https={use_https}")
+
             if QDRANT_API_KEY:
                 client = QdrantClient(
-                    url=clean_url,
+                    host=host,
+                    port=port,
                     api_key=QDRANT_API_KEY,
+                    https=use_https,
                     timeout=QDRANT_TIMEOUT,
                     prefer_grpc=False  # Use REST API instead of gRPC
                 )
             else:
                 client = QdrantClient(
-                    url=clean_url,
+                    host=host,
+                    port=port,
+                    https=use_https,
                     timeout=QDRANT_TIMEOUT,
                     prefer_grpc=False  # Use REST API instead of gRPC
                 )
