@@ -23,16 +23,20 @@ def get_qdrant_client():
         # Priority 1: Use QDRANT_URL if provided (for production/cloud deployments)
         if QDRANT_URL:
             logger.info(f"Connecting to Qdrant using URL | url={QDRANT_URL}")
+            # Remove trailing slash if present
+            clean_url = QDRANT_URL.rstrip('/')
             if QDRANT_API_KEY:
                 client = QdrantClient(
-                    url=QDRANT_URL,
+                    url=clean_url,
                     api_key=QDRANT_API_KEY,
-                    timeout=QDRANT_TIMEOUT
+                    timeout=QDRANT_TIMEOUT,
+                    prefer_grpc=False  # Use REST API instead of gRPC
                 )
             else:
                 client = QdrantClient(
-                    url=QDRANT_URL,
-                    timeout=QDRANT_TIMEOUT
+                    url=clean_url,
+                    timeout=QDRANT_TIMEOUT,
+                    prefer_grpc=False  # Use REST API instead of gRPC
                 )
         # Priority 2: Use host:port (for development/Docker)
         else:
