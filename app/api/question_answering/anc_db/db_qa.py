@@ -393,7 +393,12 @@ def format_response_as_html_list(text: str) -> str:
     numbered_matches = numbered_pattern.findall(text)
 
     if len(numbered_matches) >= 2:
-        items = [f"<li>{re.sub(r'^\d+\.\s*', '', m.strip())}</li>" for m in numbered_matches if m.strip()]
+        # Extract items without backslash in f-string
+        items = []
+        for m in numbered_matches:
+            if m.strip():
+                clean_item = re.sub(r'^\d+\.\s*', '', m.strip())
+                items.append(f"<li>{clean_item}</li>")
         if items:
             return f"<ol>{''.join(items)}</ol>"
 
@@ -402,7 +407,12 @@ def format_response_as_html_list(text: str) -> str:
     bullet_matches = bullet_pattern.findall(text)
 
     if len(bullet_matches) >= 2:
-        items = [f"<li>{re.sub(r'^[-*•]\s*', '', m.strip())}</li>" for m in bullet_matches if m.strip()]
+        # Extract items without backslash in f-string
+        items = []
+        for m in bullet_matches:
+            if m.strip():
+                clean_item = re.sub(r'^[-*•]\s*', '', m.strip())
+                items.append(f"<li>{clean_item}</li>")
         if items:
             return f"<ul>{''.join(items)}</ul>"
 
