@@ -2,6 +2,7 @@ trigger:
   branches:
     include:
       - dev
+      - dev-local
       - prod
 pr:
   branches:
@@ -15,7 +16,7 @@ pool:
 stages:
   - stage: ASKKEN_PYTHON_API_FOR_Development
     displayName: "Build and Deploy to ASKKEN PYTHON API Development"
-    condition: eq(variables['Build.SourceBranch'], 'refs/heads/dev')
+    condition: or(eq(variables['Build.SourceBranch'], 'refs/heads/dev'), eq(variables['Build.SourceBranch'], 'refs/heads/dev-local'))
     variables:
       - group: askken_python_backend_dev
     jobs:
