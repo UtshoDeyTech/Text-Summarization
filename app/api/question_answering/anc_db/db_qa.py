@@ -15,14 +15,244 @@ from urllib.parse import quote
 from langchain.agents import AgentExecutor
 from langchain_core.agents import AgentAction, AgentFinish
 from langchain.callbacks.base import BaseCallbackHandler
+from .schema_cache_manager import schema_cache
+from .query_cache_manager import query_cache
+import asyncio
 
 router = APIRouter()
+
+# Startup event flag to ensure initialization happens only once
+_schema_cache_initialized = False
+
+# Global database connection pool
+_db_connection = None
+_connection_url = None
+
+# Global agent pool - stores pre-initialized agents
+_agent_pool = {}
+_agent_pool_initialized = False
+
+async def initialize_schema_cache_on_startup():
+    """
+    Initialize schema cache on server startup if not already present.
+    This function is called when the application starts.
+    """
+    global _schema_cache_initialized
+
+    if _schema_cache_initialized:
+        logger.info("[STARTUP] Schema cache already initialized, skipping")
+        return
+
+    try:
+        logger.info("[STARTUP] Checking schema cache status...")
+
+        # Check if cache exists and has data
+        cache_info = schema_cache.get_cache_info()
+
+        if cache_info.get("cache_exists") and cache_info.get("total_tables", 0) > 0:
+            logger.info(f"[STARTUP] ✓ Schema cache already exists with {cache_info['total_tables']} tables")
+            logger.info(f"[STARTUP] Tables cached: {list(cache_info.get('tables', {}).keys())}")
+            _schema_cache_initialized = True
+            return
+
+        logger.info("[STARTUP] Schema cache is empty or missing, initializing...")
+
+        # Build database connection
+        if not all([DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT]):
+            logger.warning("[STARTUP] Database configuration incomplete, schema cache initialization skipped")
+            return
+
+        encoded_password = quote(DB_PASSWORD)
+        connection_url = f"mysql+pymysql://{DB_USER}:{encoded_password}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
+
+        # Get all tables to cache
+        tables_to_cache = list(ALLOWED_TABLES.values()) + ["customer_master"]
+        logger.info(f"[STARTUP] Fetching schemas for {len(tables_to_cache)} tables...")
+
+        # Connect to database
+        db = SQLDatabase.from_uri(connection_url, include_tables=tables_to_cache)
+
+        schemas_to_save = {}
+
+        # Fetch schema for each table
+        for table_name in tables_to_cache:
+            try:
+                logger.info(f"[STARTUP] Fetching schema for {table_name}")
+                table_info = db.get_table_info_no_throw([table_name])
+
+                # Parse column names
+                columns = []
+                for line in table_info.split('\n'):
+                    if line.strip() and not line.strip().startswith('CREATE') and not line.strip().startswith('/*'):
+                        match = re.match(r'^\s*`?(\w+)`?\s+', line)
+                        if match:
+                            columns.append(match.group(1))
+
+                if columns:
+                    schemas_to_save[table_name] = {
+                        "schema_info": table_info,
+                        "column_list": columns
+                    }
+                    logger.info(f"[STARTUP] ✓ {table_name} - {len(columns)} columns")
+                else:
+                    logger.warning(f"[STARTUP] No columns found for {table_name}")
+
+            except Exception as table_error:
+                logger.error(f"[STARTUP] Error fetching schema for {table_name}: {table_error}")
+
+        # Save all schemas to cache
+        if schemas_to_save:
+            success = schema_cache.save_all_schemas(schemas_to_save)
+            if success:
+                logger.info(f"[STARTUP] ✓ Schema cache initialized with {len(schemas_to_save)} tables")
+                _schema_cache_initialized = True
+            else:
+                logger.error(f"[STARTUP] Failed to save schemas to cache")
+        else:
+            logger.warning(f"[STARTUP] No schemas were fetched successfully")
+
+    except Exception as e:
+        logger.error(f"[STARTUP] Error initializing schema cache: {str(e)}")
+        # Don't raise exception - allow server to start even if cache init fails
+
+def initialize_database_connection():
+    """
+    Initialize database connection at startup.
+    This connection is reused across all requests.
+    """
+    global _db_connection, _connection_url
+
+    try:
+        logger.info("[STARTUP] Initializing database connection pool...")
+
+        if not all([DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT]):
+            logger.warning("[STARTUP] Database configuration incomplete, connection pool not initialized")
+            return False
+
+        # Build connection URL (pool parameters handled by SQLAlchemy engine, not URL)
+        encoded_password = quote(DB_PASSWORD)
+        _connection_url = f"mysql+pymysql://{DB_USER}:{encoded_password}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
+
+        # Get all tables
+        all_tables = list(ALLOWED_TABLES.values()) + ["customer_master"]
+
+        # Create database connection
+        _db_connection = SQLDatabase.from_uri(
+            _connection_url,
+            include_tables=all_tables,
+            sample_rows_in_table_info=2
+        )
+
+        logger.info(f"[STARTUP] ✓ Database connection pool initialized")
+        logger.info(f"[STARTUP] ✓ Connected to {len(all_tables)} tables")
+        return True
+
+    except Exception as e:
+        logger.error(f"[STARTUP] Failed to initialize database connection: {str(e)}")
+        return False
+
+
+def initialize_agent_pool():
+    """
+    Initialize agent pool at startup.
+    Creates one agent instance for each lead type that can be reused.
+
+    Note: Agents are created without specific agent_id/agency_id filtering.
+    The filtering is applied at query time through the system prompt.
+    """
+    global _agent_pool, _agent_pool_initialized
+
+    if _agent_pool_initialized:
+        logger.info("[STARTUP] Agent pool already initialized, skipping")
+        return True
+
+    try:
+        logger.info("[STARTUP] Initializing agent pool...")
+
+        if not _db_connection:
+            logger.warning("[STARTUP] Database connection not available, skipping agent pool initialization")
+            return False
+
+        # Create LLM instance (shared across all agents) - optimized for speed
+        llm = ChatOpenAI(
+            model_name="gpt-4o-mini",
+            temperature=0,
+            max_tokens=800,  # Reduced for faster responses
+            request_timeout=SecurityConfig.MAX_EXECUTION_TIME
+        )
+
+        # For each lead type, create a base agent configuration
+        # We'll store the toolkit and LLM, and create agents on-demand with specific filters
+        for lead_type, table_name in ALLOWED_TABLES.items():
+            try:
+                logger.info(f"[STARTUP] Creating agent toolkit for {lead_type} ({table_name})")
+
+                # Create a database connection for this specific table
+                table_db = SQLDatabase.from_uri(
+                    _connection_url,
+                    include_tables=[table_name, "customer_master"],
+                    sample_rows_in_table_info=2
+                )
+
+                # Store the database connection and LLM for this lead type
+                # We'll create the actual agent when needed with specific agent_id/agency_id
+                _agent_pool[lead_type] = {
+                    "db": table_db,
+                    "llm": llm,
+                    "table_name": table_name
+                }
+
+                logger.info(f"[STARTUP] ✓ Toolkit ready for {lead_type}")
+
+            except Exception as table_error:
+                logger.error(f"[STARTUP] Failed to initialize toolkit for {lead_type}: {table_error}")
+
+        _agent_pool_initialized = True
+        logger.info(f"[STARTUP] ✓ Agent pool initialized with {len(_agent_pool)} lead types")
+        return True
+
+    except Exception as e:
+        logger.error(f"[STARTUP] Failed to initialize agent pool: {str(e)}")
+        return False
+
+
+@router.on_event("startup")
+async def startup_event():
+    """FastAPI startup event handler"""
+    logger.info("[STARTUP] ========================================")
+    logger.info("[STARTUP] Starting ANC DB service initialization")
+    logger.info("[STARTUP] ========================================")
+
+    # Step 1: Initialize schema cache
+    logger.info("[STARTUP] Step 1: Schema cache initialization...")
+    await initialize_schema_cache_on_startup()
+    logger.info("[STARTUP] ✓ Schema cache initialization complete")
+
+    # Step 2: Initialize database connection pool
+    logger.info("[STARTUP] Step 2: Database connection pool initialization...")
+    db_success = initialize_database_connection()
+    if db_success:
+        logger.info("[STARTUP] ✓ Database connection pool initialized")
+    else:
+        logger.warning("[STARTUP] ✗ Database connection pool initialization failed")
+
+    # Step 3: Initialize agent pool
+    logger.info("[STARTUP] Step 3: Agent pool initialization...")
+    agent_success = initialize_agent_pool()
+    if agent_success:
+        logger.info("[STARTUP] ✓ Agent pool initialized")
+    else:
+        logger.warning("[STARTUP] ✗ Agent pool initialization failed")
+
+    logger.info("[STARTUP] ========================================")
+    logger.info("[STARTUP] ANC DB service initialization complete")
+    logger.info("[STARTUP] ========================================")
 
 # Security Configuration
 class SecurityConfig:
     MAX_QUERY_LENGTH = 3000
-    MAX_ITERATIONS = 10  # Increased to allow for schema exploration + JOIN operations
-    MAX_EXECUTION_TIME = 60
+    MAX_ITERATIONS = 5  # Max 5, but agent should complete in 1-2 iterations with optimized prompts
+    MAX_EXECUTION_TIME = 45  # Reduced from 60 to 45 - faster timeout
     RATE_LIMIT_PER_MINUTE = 15
     
     FORBIDDEN_PATTERNS = [
@@ -150,78 +380,41 @@ class AncDBResponse(BaseModel):
 
 def format_response_as_html_list(text: str) -> str:
     """
-    Convert text responses containing multiple items into HTML list format.
+    Convert text responses containing multiple items into HTML list format (optimized).
     Detects numbered lists, bullet points, and multiple distinct items.
     """
     if not text or len(text.strip()) < 10:
         return text
-    
-    logger.debug(f"[FORMAT] Attempting to format response as HTML list")
-    
-    # Clean the text
+
     text = text.strip()
-    
+
     # Pattern 1: Detect numbered lists (1. item, 2. item, etc.)
     numbered_pattern = re.compile(r'^(\d+\.\s+.+?)(?=\n\d+\.|$)', re.MULTILINE | re.DOTALL)
     numbered_matches = numbered_pattern.findall(text)
-    
+
     if len(numbered_matches) >= 2:
-        logger.debug(f"[FORMAT] Detected numbered list with {len(numbered_matches)} items")
-        items = []
-        for match in numbered_matches:
-            item = re.sub(r'^\d+\.\s*', '', match.strip())
-            if item:
-                items.append(f"<li>{item}</li>")
-        
+        items = [f"<li>{re.sub(r'^\d+\.\s*', '', m.strip())}</li>" for m in numbered_matches if m.strip()]
         if items:
-            logger.info(f"[FORMAT] Formatted as ordered list with {len(items)} items")
             return f"<ol>{''.join(items)}</ol>"
-    
+
     # Pattern 2: Detect bullet points (-, *, •, etc.)
     bullet_pattern = re.compile(r'^([-*•]\s+.+?)(?=\n[-*•]|$)', re.MULTILINE | re.DOTALL)
     bullet_matches = bullet_pattern.findall(text)
-    
+
     if len(bullet_matches) >= 2:
-        logger.debug(f"[FORMAT] Detected bullet list with {len(bullet_matches)} items")
-        items = []
-        for match in bullet_matches:
-            item = re.sub(r'^[-*•]\s*', '', match.strip())
-            if item:
-                items.append(f"<li>{item}</li>")
-        
+        items = [f"<li>{re.sub(r'^[-*•]\s*', '', m.strip())}</li>" for m in bullet_matches if m.strip()]
         if items:
-            logger.info(f"[FORMAT] Formatted as unordered list with {len(items)} items")
             return f"<ul>{''.join(items)}</ul>"
-    
-    # Pattern 3: Detect multiple distinct sentences/paragraphs that could be list items
+
+    # Pattern 3: Detect multiple distinct lines (emails, phones, names)
     lines = [line.strip() for line in text.split('\n') if line.strip()]
-    
-    if len(lines) >= 2 and len(lines) <= 10:
-        logger.debug(f"[FORMAT] Checking {len(lines)} lines for structured data")
-        email_count = sum(1 for line in lines if re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', line))
-        phone_count = sum(1 for line in lines if re.search(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b', line))
-        name_count = sum(1 for line in lines if re.search(r'^[A-Z][a-z]+ [A-Z][a-z]+', line))
-        
-        if (email_count >= len(lines) * 0.6 or 
-            phone_count >= len(lines) * 0.6 or 
-            name_count >= len(lines) * 0.6 or
-            all(len(line) > 10 and len(line) < 200 for line in lines)):
-            
-            logger.info(f"[FORMAT] Formatted structured data as unordered list")
+
+    if 2 <= len(lines) <= 10:
+        email_count = sum(1 for line in lines if '@' in line)
+        if email_count >= len(lines) * 0.6 or all(10 < len(line) < 200 for line in lines):
             items = [f"<li>{line}</li>" for line in lines]
             return f"<ul>{''.join(items)}</ul>"
-    
-    # Pattern 4: Detect comma-separated lists that should be converted
-    if ', ' in text and text.count(',') >= 2:
-        parts = [part.strip() for part in text.split(',')]
-        if len(parts) >= 3 and len(parts) <= 15:
-            avg_length = sum(len(part) for part in parts) / len(parts)
-            if 5 <= avg_length <= 50 and not any('\n' in part for part in parts):
-                logger.info(f"[FORMAT] Formatted comma-separated list with {len(parts)} items")
-                items = [f"<li>{part}</li>" for part in parts if part]
-                return f"<ul>{''.join(items)}</ul>"
-    
-    logger.debug(f"[FORMAT] No formatting pattern matched, returning original text")
+
     return text
 
 def get_restricted_system_prompt(lead_type: str, table_name: str, agent_id: str, agency_id: str, table_schema: str) -> str:
@@ -249,12 +442,12 @@ MANDATORY FILTERING (SECURITY):
 - This filtering is REQUIRED for security - never skip it
 - When JOINing with customer_master, apply the filter on {table_name}
 
-CRITICAL INSTRUCTIONS FOR HANDLING LARGE TABLE:
-1. ALWAYS use the sql_db_schema tool FIRST to understand available columns before querying
-2. When user asks about ANY field, check the schema to find the exact column name
-3. Use sql_db_schema tool to explore table structure when uncertain about column names
-4. The table has 70-100 columns, so explore the schema to find relevant columns
-5. Look for columns that match the user's question semantically (e.g., "premium" might be in "annual_premium", "monthly_premium", etc.)
+CRITICAL INSTRUCTIONS - SINGLE ITERATION REQUIRED:
+1. Schema is PROVIDED ABOVE - DO NOT call sql_db_schema or sql_db_list_tables
+2. You already know the tables: {table_name} and customer_master
+3. Review the schema above and construct your SQL query IMMEDIATELY
+4. Execute query with sql_db_query tool in your FIRST action
+5. IMPORTANT: Do NOT explore - EXECUTE IMMEDIATELY in iteration 1
 
 QUERY PATTERNS:
 
@@ -313,13 +506,18 @@ RESPONSE GUIDELINES:
 - Always explain what you searched for in natural language
 - Format multiple results clearly (one per line or in a structured format)
 
-WORKFLOW FOR EVERY QUERY:
-1. Analyze the user's question to identify what data they want
-2. Use sql_db_schema tool to check available columns in {table_name}
-3. Find matching columns (exact match or semantic match)
-4. Construct appropriate SELECT query with proper JOIN if needed
-5. Apply mandatory security filters
-6. Execute query and format results
+SINGLE-ITERATION WORKFLOW (MAXIMUM SPEED):
+ITERATION 1 ONLY - Execute sql_db_query immediately:
+1. Read question + schema above (already loaded - no tools needed)
+2. Construct SQL with security filters
+3. Call sql_db_query tool RIGHT NOW
+4. Format result and respond
+
+DO NOT:
+- Call sql_db_list_tables (you know: {table_name}, customer_master)
+- Call sql_db_schema (schema is provided above)
+- Call sql_db_query_checker (skip validation for speed)
+- Take multiple iterations (EXECUTE IN ITERATION 1!)
 
 SECURITY REMINDERS:
 - NEVER query tables other than {table_name} and customer_master
@@ -328,29 +526,42 @@ SECURITY REMINDERS:
 - Only use SELECT queries - no modifications allowed"""
 
 class RestrictedAncDBAgent:
-    def __init__(self, lead_type: str, agent_id: str, agency_id: str):
+    def __init__(self, lead_type: str, agent_id: str, agency_id: str, use_pool: bool = True):
         logger.info(f"[AGENT INIT] Initializing RestrictedAncDBAgent for lead_type={lead_type}")
-        
+
         if lead_type not in ALLOWED_TABLES:
             raise ValueError(f"Invalid lead_type: {lead_type}")
-        
+
         if not agent_id or not agent_id.strip():
             raise ValueError("agent_id is required for security")
-        
+
         if not agency_id or not agency_id.strip():
             raise ValueError("agency_id is required for security")
-        
+
         self.lead_type = lead_type
         self.table_name = ALLOWED_TABLES[lead_type]
         self.agent_id = agent_id.strip()
         self.agency_id = agency_id.strip()
-        
+        self.use_pool = use_pool
+
         logger.info(f"[AGENT INIT] Tables allowed: {self.table_name}, customer_master")
         logger.info(f"[AGENT INIT] Security filters: agent_id={self.agent_id}, agency_id={self.agency_id}")
-        
-        self.setup_environment()
-        self.connection_url = self.build_connection_url()
-        self.db = None
+        logger.info(f"[AGENT INIT] Using pool: {self.use_pool}")
+
+        # Check if we can use the pool
+        if self.use_pool and lead_type in _agent_pool:
+            logger.info(f"[AGENT INIT] ✓ Using pooled resources for {lead_type}")
+            self.db = _agent_pool[lead_type]["db"]
+            self.llm = _agent_pool[lead_type]["llm"]
+            self.connection_url = _connection_url
+        else:
+            # Fallback to creating new connection
+            logger.info(f"[AGENT INIT] Pool not available, creating new connection")
+            self.setup_environment()
+            self.connection_url = self.build_connection_url()
+            self.db = None
+            self.llm = None
+
         self.agent = None
         logger.info(f"[AGENT INIT] Agent instance created successfully")
         
@@ -388,22 +599,27 @@ class RestrictedAncDBAgent:
         logger.info("[DB CONNECTION] Testing database connection...")
         try:
             start_time = time.time()
-            # Include both the lead table and customer_master
-            self.db = SQLDatabase.from_uri(
-                self.connection_url,
-                include_tables=[self.table_name, "customer_master"],
-                sample_rows_in_table_info=2  # Show sample data in schema
-            )
-            connection_time = round(time.time() - start_time, 3)
-            
-            logger.info(f"[DB CONNECTION] ✓ Database connected successfully in {connection_time}s")
-            
+
+            # If using pool, db is already set
+            if not self.db:
+                # Include both the lead table and customer_master
+                self.db = SQLDatabase.from_uri(
+                    self.connection_url,
+                    include_tables=[self.table_name, "customer_master"],
+                    sample_rows_in_table_info=2  # Show sample data in schema
+                )
+                connection_time = round(time.time() - start_time, 3)
+                logger.info(f"[DB CONNECTION] ✓ Database connected successfully in {connection_time}s")
+            else:
+                connection_time = round(time.time() - start_time, 3)
+                logger.info(f"[DB CONNECTION] ✓ Using pooled database connection ({connection_time}s)")
+
             # Verify tables are accessible
             usable_tables = self.db.get_usable_table_names()
-            
+
             if self.table_name in usable_tables and "customer_master" in usable_tables:
                 logger.info(f"[DB CONNECTION] ✓ Tables accessible: {self.table_name}, customer_master")
-                
+
                 # Get and log table schema for the leads table
                 try:
                     table_info = self.db.get_table_info_no_throw([self.table_name])
@@ -412,7 +628,7 @@ class RestrictedAncDBAgent:
                     logger.debug(f"[DB CONNECTION] Schema preview: {table_info[:500]}...")
                 except Exception as schema_error:
                     logger.warning(f"[DB CONNECTION] Could not retrieve schema info: {schema_error}")
-                    
+
             else:
                 missing = []
                 if self.table_name not in usable_tables:
@@ -421,19 +637,29 @@ class RestrictedAncDBAgent:
                     missing.append("customer_master")
                 logger.error(f"[DB CONNECTION] ✗ Tables not found: {', '.join(missing)}")
                 return False
-            
+
             logger.info(f"[DB CONNECTION] ✓ Connection test passed")
             return True
-            
+
         except Exception as e:
             logger.error(f"[DB CONNECTION] ✗ Database connection failed: {type(e).__name__}: {str(e)}")
             return False
     
     def get_table_schema_summary(self) -> str:
-        """Get a formatted summary of the table schema"""
+        """Get a formatted summary of the table schema from cache or database"""
         try:
+            # Try to get schema from cache first
+            logger.debug(f"[SCHEMA] Checking cache for {self.table_name}")
+            cached_schema = schema_cache.get_formatted_schema(self.table_name)
+
+            if cached_schema:
+                logger.info(f"[SCHEMA] ✓ Using cached schema for {self.table_name}")
+                return cached_schema
+
+            # If not in cache, fetch from database
+            logger.info(f"[SCHEMA] Cache miss, fetching schema from database for {self.table_name}")
             table_info = self.db.get_table_info_no_throw([self.table_name])
-            
+
             # Parse column names from the schema
             columns = []
             for line in table_info.split('\n'):
@@ -443,7 +669,12 @@ class RestrictedAncDBAgent:
                     match = re.match(r'^\s*`?(\w+)`?\s+', line)
                     if match:
                         columns.append(match.group(1))
-            
+
+            # Save to cache for future use
+            if columns:
+                logger.info(f"[SCHEMA] Saving schema to cache for {self.table_name} ({len(columns)} columns)")
+                schema_cache.save_schema(self.table_name, table_info, columns)
+
             # Format as readable list
             if columns:
                 schema_summary = "Available columns:\n" + "\n".join([f"  - {col}" for col in columns[:50]])  # Limit to first 50 for readability
@@ -452,7 +683,7 @@ class RestrictedAncDBAgent:
                 return schema_summary
             else:
                 return table_info[:1000]  # Fallback to raw schema info
-                
+
         except Exception as e:
             logger.error(f"[SCHEMA] Error getting schema summary: {e}")
             return "Schema information not available"
@@ -461,15 +692,19 @@ class RestrictedAncDBAgent:
         logger.info("[AGENT INIT] Initializing SQL agent...")
         try:
             start_time = time.time()
-            
-            logger.debug("[AGENT INIT] Creating ChatOpenAI LLM instance")
-            self.llm = ChatOpenAI(
-                model_name="gpt-4o-mini",
-                temperature=0,
-                max_tokens=2000,
-                request_timeout=SecurityConfig.MAX_EXECUTION_TIME
-            )
-            logger.info(f"[AGENT INIT] ✓ LLM initialized (model: gpt-4o-mini)")
+
+            # If using pool, LLM is already set
+            if not self.llm:
+                logger.debug("[AGENT INIT] Creating ChatOpenAI LLM instance")
+                self.llm = ChatOpenAI(
+                    model_name="gpt-4o-mini",
+                    temperature=0,
+                    max_tokens=800,  # Reduced from 2000 to 800 - faster responses, most answers are short
+                    request_timeout=SecurityConfig.MAX_EXECUTION_TIME
+                )
+                logger.info(f"[AGENT INIT] ✓ LLM initialized (model: gpt-4o-mini)")
+            else:
+                logger.info(f"[AGENT INIT] ✓ Using pooled LLM (model: gpt-4o-mini)")
             
             logger.debug("[AGENT INIT] Creating SQL Database Toolkit")
             toolkit = SQLDatabaseToolkit(db=self.db, llm=self.llm)
@@ -496,12 +731,12 @@ class RestrictedAncDBAgent:
             self.agent = create_sql_agent(
                 llm=self.llm,
                 toolkit=toolkit,
-                verbose=True,
+                verbose=False,  # Disabled verbose mode for faster execution
                 agent_type="openai-tools",
                 system_message=system_message,
                 max_iterations=SecurityConfig.MAX_ITERATIONS,
-                handle_parsing_errors=True,
-                early_stopping_method="generate"
+                handle_parsing_errors=True
+                # Removed early_stopping_method - not supported in this LangChain version
             )
             
             init_time = round(time.time() - start_time, 3)
@@ -513,32 +748,23 @@ class RestrictedAncDBAgent:
             return False
     
     def generate_no_results_message(self, question: str) -> str:
-        """Generate a natural, AI-created message when no results are found"""
+        """Generate a natural, AI-created message when no results are found (optimized)"""
         try:
             logger.debug("[NO RESULTS] Generating AI-powered 'no results' message")
-            
+
             no_results_llm = ChatOpenAI(
                 model_name="gpt-4o-mini",
                 temperature=0.8,
-                max_tokens=150
+                max_tokens=80  # Reduced from 150 to 80 - concise messages
             )
 
-            prompt = f"""The user asked: "{question}" about {self.lead_type} leads.
-
-After searching the database (including customer information), no relevant information was found.
-
-Generate a friendly, natural, conversational response (2-3 sentences) that:
-1. Acknowledges their question
-2. States that no relevant information was found in {self.lead_type} leads
-3. Encourages them to try a different search or be more specific
-4. Uses varied, natural language (avoid templates)
-5. NEVER mention table names
-
-Keep it concise, helpful, and professional."""
+            # Shorter prompt for faster response
+            prompt = f"""User asked: "{question}" about {self.lead_type} leads. No data found.
+Write a friendly 2-sentence response (no table names):"""
 
             response = no_results_llm.invoke(prompt)
             message = response.content if hasattr(response, 'content') else str(response)
-            
+
             logger.info(f"[NO RESULTS] Generated message: {message[:100]}...")
             return message.strip()
 
@@ -547,41 +773,30 @@ Keep it concise, helpful, and professional."""
             return f"I couldn't find any relevant information in your {self.lead_type} leads for that query. Please try rephrasing your question or providing more specific details."
     
     def generate_natural_suggestions(self, question: str, found_data: bool) -> List[str]:
-        """Generate natural, contextual suggested questions using AI"""
+        """Generate natural, contextual suggested questions using AI (optimized)"""
         try:
             logger.debug("[SUGGESTIONS] Generating AI-powered suggestions")
-            
+
             suggestions_llm = ChatOpenAI(
                 model_name="gpt-4o-mini",
                 temperature=0.7,
-                max_tokens=200
+                max_tokens=100  # Reduced from 200 to 100 - suggestions are short
             )
 
             data_context = "data was found" if found_data else "no data was found"
-            
-            prompt = f"""The user asked: "{question}" about {self.lead_type} leads, and {data_context}.
 
-Generate exactly 3 helpful follow-up questions they might want to ask about {self.lead_type} leads.
-
-Requirements:
-- Each question should be natural and conversational
-- Focus on {self.lead_type} leads and customer information
-- Include questions about customer names, emails, phone numbers, and addresses
-- NEVER mention table names
-- Only say "{self.lead_type} leads" or "customers"
-- Keep each question under 15 words
-- Make them practical and useful
-
-Format: Just list 3 questions, one per line, no numbering."""
+            # Shorter, more direct prompt
+            prompt = f"""User asked: "{question}" about {self.lead_type} leads ({data_context}).
+Generate 3 follow-up questions (under 12 words each, one per line, no numbers):"""
 
             response = suggestions_llm.invoke(prompt)
             suggestions_text = response.content if hasattr(response, 'content') else str(response)
-            
+
             # Parse suggestions
             suggestions = [s.strip() for s in suggestions_text.strip().split('\n') if s.strip()]
             suggestions = [re.sub(r'^\d+[\.\)]\s*', '', s) for s in suggestions]
             suggestions = suggestions[:3]
-            
+
             # Fallback if we don't get 3
             while len(suggestions) < 3:
                 fallback = [
@@ -590,7 +805,7 @@ Format: Just list 3 questions, one per line, no numbering."""
                     f"Find contact information for a specific customer name"
                 ]
                 suggestions.append(fallback[len(suggestions)])
-            
+
             logger.info(f"[SUGGESTIONS] Generated {len(suggestions)} suggestions")
             return suggestions[:3]
 
@@ -602,33 +817,213 @@ Format: Just list 3 questions, one per line, no numbering."""
                 f"How many customers are in my {self.lead_type} leads?"
             ]
     
+    def generate_sql_directly(self, question: str) -> str:
+        """
+        Generate SQL query directly using LLM without agent iterations.
+        This is MUCH faster than letting the agent explore.
+        """
+        try:
+            logger.info(f"[DIRECT SQL] Generating SQL query for: {question[:100]}...")
+
+            # Get schema
+            schema_summary = self.get_table_schema_summary()
+            filter_clause = f"{self.table_name}.agent_id = '{self.agent_id}' AND {self.table_name}.agency_id = '{self.agency_id}'"
+
+            # Create a focused prompt for SQL generation only
+            sql_generation_prompt = f"""Generate a SQL query for this question.
+
+QUESTION: {question}
+
+TABLES:
+- {self.table_name} AS l (alias 'l') - Lead data
+- customer_master AS cm (alias 'cm') - Customer info
+
+SCHEMA FOR {self.table_name}:
+{schema_summary}
+
+MANDATORY FILTER (use table alias 'l'):
+WHERE l.agent_id = '{self.agent_id}' AND l.agency_id = '{self.agency_id}'
+
+TEMPLATE (copy this and modify):
+```sql
+SELECT cm.first_name, cm.last_name, cm.email_id, l.email, l.mobile_number
+FROM {self.table_name} l
+INNER JOIN customer_master cm ON l.customer_id = cm.customer_id
+WHERE l.agent_id = '{self.agent_id}' AND l.agency_id = '{self.agency_id}'
+AND (cm.first_name LIKE '%<name>%' OR cm.last_name LIKE '%<name>%')
+LIMIT 10
+```
+
+CRITICAL RULES:
+1. Use table aliases: 'l' for {self.table_name}, 'cm' for customer_master
+2. Security filter MUST use 'l' alias: WHERE l.agent_id = '{self.agent_id}' AND l.agency_id = '{self.agency_id}'
+3. For customer names → use INNER JOIN with customer_master
+4. Extract search term from question and use in LIKE clause
+5. ONLY output the SQL query, nothing else
+
+SQL QUERY:"""
+
+            # Use a fast LLM call to generate SQL
+            sql_generator = ChatOpenAI(
+                model_name="gpt-4o-mini",
+                temperature=0,
+                max_tokens=300
+            )
+
+            response = sql_generator.invoke(sql_generation_prompt)
+            sql_query = response.content if hasattr(response, 'content') else str(response)
+
+            # Extract SQL from markdown code blocks if present
+            if "```sql" in sql_query:
+                sql_query = sql_query.split("```sql")[1].split("```")[0].strip()
+            elif "```" in sql_query:
+                sql_query = sql_query.split("```")[1].split("```")[0].strip()
+
+            logger.info(f"[DIRECT SQL] Generated query: {sql_query[:200]}...")
+            return sql_query
+
+        except Exception as e:
+            logger.error(f"[DIRECT SQL] Error generating SQL: {e}")
+            return None
+
+    def execute_sql_directly(self, sql_query: str) -> str:
+        """Execute SQL query directly against database"""
+        try:
+            logger.info(f"[DIRECT EXEC] Executing query...")
+            result = self.db.run(sql_query)
+            logger.info(f"[DIRECT EXEC] Query executed successfully, result length: {len(str(result))}")
+            return str(result)
+        except Exception as e:
+            logger.error(f"[DIRECT EXEC] Query execution error: {e}")
+            return f"Error executing query: {str(e)}"
+
+    def format_sql_results(self, question: str, sql_result: str) -> str:
+        """Format SQL results into natural language answer"""
+        try:
+            logger.info(f"[FORMAT] Formatting SQL results into natural language...")
+
+            formatter_prompt = f"""Convert this SQL query result into a natural, conversational answer.
+
+USER QUESTION: {question}
+SQL RESULT: {sql_result}
+
+INSTRUCTIONS:
+1. Write a clear, concise answer (1-2 sentences max)
+2. Use natural language, not technical terms
+3. If multiple results, list them clearly
+4. If no results, say "No information found"
+5. NEVER mention table names or technical details
+
+ANSWER:"""
+
+            formatter = ChatOpenAI(
+                model_name="gpt-4o-mini",
+                temperature=0,
+                max_tokens=200
+            )
+
+            response = formatter.invoke(formatter_prompt)
+            answer = response.content if hasattr(response, 'content') else str(response)
+
+            logger.info(f"[FORMAT] Formatted answer: {answer[:100]}...")
+            return answer.strip()
+
+        except Exception as e:
+            logger.error(f"[FORMAT] Error formatting results: {e}")
+            return sql_result
+
+    def process_question_direct(self, question: str) -> tuple:
+        """
+        Process question using DIRECT SQL generation (fast path).
+        Bypasses agent exploration entirely.
+        """
+        logger.info(f"[DIRECT MODE] Processing question: {question[:100]}...")
+        logger.info(f"[DIRECT MODE] Lead type: {self.lead_type}, Table: {self.table_name}")
+
+        try:
+            start_time = time.time()
+
+            # Step 1: Generate SQL directly (1 LLM call)
+            sql_query = self.generate_sql_directly(question)
+            if not sql_query:
+                return ("Error generating SQL query", [])
+
+            sql_gen_time = round(time.time() - start_time, 3)
+            logger.info(f"[DIRECT MODE] SQL generation took {sql_gen_time}s")
+
+            # Step 2: Execute SQL
+            sql_result = self.execute_sql_directly(sql_query)
+            exec_time = round(time.time() - start_time, 3)
+            logger.info(f"[DIRECT MODE] SQL execution took {exec_time - sql_gen_time}s")
+
+            # Step 3: Format results (1 LLM call)
+            answer = self.format_sql_results(question, sql_result)
+            format_time = round(time.time() - start_time, 3)
+            logger.info(f"[DIRECT MODE] Formatting took {format_time - exec_time}s")
+
+            # Step 4: Generate suggestions (1 LLM call)
+            suggestions = self.generate_natural_suggestions(question, found_data=True)
+
+            total_time = round(time.time() - start_time, 3)
+            logger.info(f"[DIRECT MODE] ✓ Total time: {total_time}s (SQL: {sql_gen_time}s, Exec: {exec_time - sql_gen_time}s, Format: {format_time - exec_time}s)")
+
+            formatted_answer = format_response_as_html_list(answer)
+            return (formatted_answer, suggestions[:3])
+
+        except Exception as e:
+            logger.error(f"[DIRECT MODE] Error: {type(e).__name__}: {str(e)}")
+            raise
+
     def process_question(self, question: str) -> tuple:
         logger.info(f"[PROCESS] Processing question: {question[:100]}...")
         logger.info(f"[PROCESS] Lead type: {self.lead_type}, Table: {self.table_name}")
         logger.info(f"[PROCESS] Security filters: agent_id={self.agent_id}, agency_id={self.agency_id}")
-        
+
         try:
             filter_clause = f"{self.table_name}.agent_id = '{self.agent_id}' AND {self.table_name}.agency_id = '{self.agency_id}'"
-            
-            prompt = f"""
-Question: {question}
 
-AVAILABLE TABLES:
-- {self.table_name}: Lead-specific data (has 70-100+ columns - use sql_db_schema to explore)
-- customer_master: Customer information (names, contact details)
-- JOIN ON: {self.table_name}.customer_id = customer_master.customer_id
+            # Get schema summary upfront to avoid schema tool calls
+            schema_summary = self.get_table_schema_summary()
 
-CRITICAL SECURITY REQUIREMENT:
-- MUST filter {self.table_name} by: WHERE {filter_clause}
-- These filters are MANDATORY for every query on {self.table_name}
+            # Create example SQL based on question type
+            example_sql = f"""SELECT cm.first_name, cm.last_name, cm.email_id, l.email, l.mobile_number
+FROM {self.table_name} l
+INNER JOIN customer_master cm ON l.customer_id = cm.customer_id
+WHERE {filter_clause}
+AND (cm.first_name LIKE '%<name>%' OR cm.last_name LIKE '%<name>%')
+LIMIT 10"""
 
-IMPORTANT WORKFLOW - FOLLOW THESE STEPS:
-1. FIRST: Use sql_db_schema tool to check what columns exist in {self.table_name}
-2. SECOND: Identify which columns match the user's question (look for semantic matches)
-3. THIRD: Determine if you need customer names (if yes, JOIN with customer_master)
-4. FOURTH: Construct your SELECT query with the correct columns
-5. FIFTH: Apply mandatory security filters
-6. SIXTH: Execute and format results
+            prompt = f"""Question: {question}
+
+TABLES AVAILABLE:
+- {self.table_name} (70+ columns - schema below)
+- customer_master (customer_id, first_name, last_name, email_id, mobile_number, work_number)
+
+SCHEMA FOR {self.table_name}:
+{schema_summary}
+
+⚡ YOUR FIRST ACTION MUST BE: sql_db_query
+
+EXAMPLE QUERY TEMPLATE:
+{example_sql}
+
+Replace <name> with the actual search term from the question.
+Modify SELECT clause based on what user asks for.
+
+MANDATORY SECURITY FILTER:
+WHERE {filter_clause}
+
+EXECUTE IMMEDIATELY - Do NOT call:
+- sql_db_list_tables (tables already listed above)
+- sql_db_schema (schema already provided above)
+- sql_db_query_checker (skip validation)
+
+ACTION REQUIRED NOW:
+1. Review question: "{question}"
+2. Use schema above to find matching columns
+3. Build SQL query with security filters
+4. Execute sql_db_query immediately
+5. Return formatted answer
 
 COLUMN SEARCH STRATEGY:
 - User asks about "premium" → look for columns like: premium, annual_premium, monthly_premium, total_premium
@@ -724,12 +1119,13 @@ SUGGESTED_QUESTIONS:
             # Check if no data was found or column doesn't exist
             not_found_indicators = [
                 "no relevant", "not found", "couldn't find", "no information",
-                "not available", "doesn't exist", "no such column", "no data"
+                "not available", "doesn't exist", "no such column", "no data",
+                "agent stopped", "max iterations"
             ]
-            
+
             if not answer or len(answer) < 10 or any(indicator in answer.lower() for indicator in not_found_indicators):
                 logger.warning(f"[PROCESS] No relevant data found or column unavailable")
-                
+
                 # Check if it's a "column not found" vs "no data" scenario
                 if any(term in answer.lower() for term in ["not available", "doesn't exist", "no such column"]):
                     # Column doesn't exist - keep the agent's explanation
@@ -811,22 +1207,63 @@ async def ask_ancdb_restricted(input_data: AncDBInput):
     all of these example will be like an Insurance agent is asking some question about his leads.
     """
     start_time = time.time()
-    
+
     try:
         logger.info(f"[ENDPOINT] Received request for lead_type={input_data.lead_type}")
         logger.info(f"[ENDPOINT] Security filters: agent_id={input_data.agent_id}, agency_id={input_data.agency_id}")
         logger.info(f"[ENDPOINT] Question: {input_data.question[:100]}...")
-        
+
+        # Check query cache first to avoid API calls
+        cached_result = query_cache.get_cached_result(
+            question=input_data.question,
+            lead_type=input_data.lead_type,
+            agent_id=input_data.agent_id,
+            agency_id=input_data.agency_id
+        )
+
+        if cached_result:
+            answer, suggested_questions = cached_result
+            execution_time = round(time.time() - start_time, 2)
+
+            logger.info(f"[ENDPOINT] ✓ Query served from cache in {execution_time}s (no API calls!)")
+
+            return AncDBResponse(
+                question=input_data.question,
+                answer=answer,
+                sources=[f"{input_data.lead_type} Leads Data (cached)", "Customer Data"],
+                suggested_questions=suggested_questions,
+                model_used="gpt-4o-mini (cached)",
+                status_code="200",
+                found=True,
+                execution_time=execution_time,
+                filtered_by=f"agent_id={input_data.agent_id}, agency_id={input_data.agency_id}",
+                lead_type=input_data.lead_type
+            )
+
+        # Cache miss - process with agent
+        logger.info(f"[ENDPOINT] Cache miss, processing with agent...")
+
         # Get the restricted agent for this specific lead type
         agent = get_restricted_agent(
             lead_type=input_data.lead_type,
             agent_id=input_data.agent_id,
             agency_id=input_data.agency_id
         )
-        
-        # Process the question
-        logger.info(f"[ENDPOINT] Processing question with agent")
-        answer, suggested_questions = agent.process_question(input_data.question)
+
+        # Process the question using DIRECT MODE (bypasses agent iterations)
+        logger.info(f"[ENDPOINT] Processing question with DIRECT SQL generation")
+        answer, suggested_questions = agent.process_question_direct(input_data.question)
+
+        # Cache the result for future requests (async - don't wait)
+        asyncio.create_task(asyncio.to_thread(
+            query_cache.cache_result,
+            question=input_data.question,
+            lead_type=input_data.lead_type,
+            agent_id=input_data.agent_id,
+            agency_id=input_data.agency_id,
+            answer=answer,
+            suggested_questions=suggested_questions
+        ))
         
         # Build filter description
         filtered_by = f"agent_id={input_data.agent_id}, agency_id={input_data.agency_id}"
@@ -904,6 +1341,252 @@ async def ask_ancdb_restricted(input_data: AncDBInput):
             execution_time=execution_time,
             filtered_by=f"Error: {type(e).__name__}",
             lead_type=input_data.lead_type if hasattr(input_data, 'lead_type') else ""
+        )
+
+class SchemaRefreshRequest(BaseModel):
+    table_name: Optional[str] = Field(None, description="Specific table to refresh, or leave empty to refresh all tables")
+
+class SchemaRefreshResponse(BaseModel):
+    status: str
+    message: str
+    tables_refreshed: List[str] = []
+    execution_time: float = 0
+    cache_info: dict = {}
+
+@router.post("/refresh-schema-cache", response_model=SchemaRefreshResponse)
+async def refresh_schema_cache(request: SchemaRefreshRequest = None):
+    """
+    Refresh the schema cache by fetching the latest table structures from the database.
+
+    This endpoint should be called when:
+    - Tables are modified (columns added, removed, or renamed)
+    - Initial setup of the application
+    - Periodic maintenance
+
+    Args:
+        table_name: Optional specific table to refresh. If not provided, all tables will be refreshed.
+
+    Returns:
+        Status of the refresh operation including tables refreshed and cache information
+    """
+    start_time = time.time()
+
+    try:
+        logger.info("[SCHEMA REFRESH] Starting schema cache refresh")
+
+        # Determine which tables to refresh
+        if request and request.table_name:
+            # Validate table name
+            table_name = request.table_name
+            if table_name not in ALLOWED_TABLES.values() and table_name != "customer_master":
+                return SchemaRefreshResponse(
+                    status="error",
+                    message=f"Invalid table name: {table_name}",
+                    execution_time=round(time.time() - start_time, 3)
+                )
+            tables_to_refresh = [table_name]
+            logger.info(f"[SCHEMA REFRESH] Refreshing specific table: {table_name}")
+        else:
+            # Refresh all tables
+            tables_to_refresh = list(ALLOWED_TABLES.values()) + ["customer_master"]
+            logger.info(f"[SCHEMA REFRESH] Refreshing all {len(tables_to_refresh)} tables")
+
+        # Build database connection
+        if not all([DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT]):
+            return SchemaRefreshResponse(
+                status="error",
+                message="Database configuration incomplete",
+                execution_time=round(time.time() - start_time, 3)
+            )
+
+        encoded_password = quote(DB_PASSWORD)
+        connection_url = f"mysql+pymysql://{DB_USER}:{encoded_password}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
+
+        # Connect to database
+        db = SQLDatabase.from_uri(connection_url, include_tables=tables_to_refresh)
+
+        refreshed_tables = []
+        schemas_to_save = {}
+
+        # Fetch schema for each table
+        for table_name in tables_to_refresh:
+            try:
+                logger.info(f"[SCHEMA REFRESH] Fetching schema for {table_name}")
+                table_info = db.get_table_info_no_throw([table_name])
+
+                # Parse column names
+                columns = []
+                for line in table_info.split('\n'):
+                    if line.strip() and not line.strip().startswith('CREATE') and not line.strip().startswith('/*'):
+                        match = re.match(r'^\s*`?(\w+)`?\s+', line)
+                        if match:
+                            columns.append(match.group(1))
+
+                if columns:
+                    schemas_to_save[table_name] = {
+                        "schema_info": table_info,
+                        "column_list": columns
+                    }
+                    refreshed_tables.append(table_name)
+                    logger.info(f"[SCHEMA REFRESH] ✓ {table_name} - {len(columns)} columns")
+                else:
+                    logger.warning(f"[SCHEMA REFRESH] No columns found for {table_name}")
+
+            except Exception as table_error:
+                logger.error(f"[SCHEMA REFRESH] Error fetching schema for {table_name}: {table_error}")
+
+        # Save all schemas to cache
+        if schemas_to_save:
+            success = schema_cache.save_all_schemas(schemas_to_save)
+            if success:
+                logger.info(f"[SCHEMA REFRESH] ✓ Successfully refreshed {len(refreshed_tables)} tables")
+            else:
+                logger.error(f"[SCHEMA REFRESH] Failed to save schemas to cache")
+                return SchemaRefreshResponse(
+                    status="error",
+                    message="Failed to save schemas to cache",
+                    tables_refreshed=refreshed_tables,
+                    execution_time=round(time.time() - start_time, 3)
+                )
+
+        # Get cache info
+        cache_info = schema_cache.get_cache_info()
+
+        execution_time = round(time.time() - start_time, 3)
+
+        return SchemaRefreshResponse(
+            status="success",
+            message=f"Successfully refreshed {len(refreshed_tables)} table(s)",
+            tables_refreshed=refreshed_tables,
+            execution_time=execution_time,
+            cache_info=cache_info
+        )
+
+    except Exception as e:
+        logger.error(f"[SCHEMA REFRESH] Error: {str(e)}")
+        return SchemaRefreshResponse(
+            status="error",
+            message=f"Schema refresh failed: {str(e)}",
+            execution_time=round(time.time() - start_time, 3)
+        )
+
+class SchemaCacheInfoResponse(BaseModel):
+    status: str
+    cache_info: dict
+    execution_time: float = 0
+
+@router.get("/schema-cache-info", response_model=SchemaCacheInfoResponse)
+async def get_schema_cache_info():
+    """
+    Get information about the current schema cache
+
+    Returns:
+        Cache information including tables cached and last updated times
+    """
+    start_time = time.time()
+
+    try:
+        logger.info("[SCHEMA CACHE INFO] Retrieving cache information")
+        cache_info = schema_cache.get_cache_info()
+
+        execution_time = round(time.time() - start_time, 3)
+
+        return SchemaCacheInfoResponse(
+            status="success",
+            cache_info=cache_info,
+            execution_time=execution_time
+        )
+
+    except Exception as e:
+        logger.error(f"[SCHEMA CACHE INFO] Error: {str(e)}")
+        return SchemaCacheInfoResponse(
+            status="error",
+            cache_info={},
+            execution_time=round(time.time() - start_time, 3)
+        )
+
+class QueryCacheInfoResponse(BaseModel):
+    status: str
+    cache_info: dict
+    execution_time: float = 0
+
+@router.get("/query-cache-info", response_model=QueryCacheInfoResponse)
+async def get_query_cache_info():
+    """
+    Get information about the query result cache
+
+    Returns:
+        Cache information including entry count, active entries, and statistics
+    """
+    start_time = time.time()
+
+    try:
+        logger.info("[QUERY CACHE INFO] Retrieving cache information")
+        cache_info = query_cache.get_cache_info()
+
+        execution_time = round(time.time() - start_time, 3)
+
+        return QueryCacheInfoResponse(
+            status="success",
+            cache_info=cache_info,
+            execution_time=execution_time
+        )
+
+    except Exception as e:
+        logger.error(f"[QUERY CACHE INFO] Error: {str(e)}")
+        return QueryCacheInfoResponse(
+            status="error",
+            cache_info={},
+            execution_time=round(time.time() - start_time, 3)
+        )
+
+class QueryCacheClearRequest(BaseModel):
+    lead_type: Optional[str] = Field(None, description="Specific lead type to clear")
+    agent_id: Optional[str] = Field(None, description="Specific agent ID to clear")
+
+class QueryCacheClearResponse(BaseModel):
+    status: str
+    message: str
+    execution_time: float = 0
+
+@router.post("/clear-query-cache", response_model=QueryCacheClearResponse)
+async def clear_query_cache(request: QueryCacheClearRequest = None):
+    """
+    Clear the query result cache
+
+    Args:
+        lead_type: Optional - clear only entries for specific lead type
+        agent_id: Optional - clear only entries for specific agent
+
+    Returns:
+        Status of the clear operation
+    """
+    start_time = time.time()
+
+    try:
+        if request and (request.lead_type or request.agent_id):
+            logger.info(f"[QUERY CACHE CLEAR] Clearing cache for lead_type={request.lead_type}, agent_id={request.agent_id}")
+            query_cache.clear_cache(lead_type=request.lead_type, agent_id=request.agent_id)
+            message = f"Cleared cache for lead_type={request.lead_type}, agent_id={request.agent_id}"
+        else:
+            logger.info(f"[QUERY CACHE CLEAR] Clearing all cache")
+            query_cache.clear_cache()
+            message = "All query cache cleared"
+
+        execution_time = round(time.time() - start_time, 3)
+
+        return QueryCacheClearResponse(
+            status="success",
+            message=message,
+            execution_time=execution_time
+        )
+
+    except Exception as e:
+        logger.error(f"[QUERY CACHE CLEAR] Error: {str(e)}")
+        return QueryCacheClearResponse(
+            status="error",
+            message=f"Failed to clear cache: {str(e)}",
+            execution_time=round(time.time() - start_time, 3)
         )
 
 class DBConnectionResponse(BaseModel):
