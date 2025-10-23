@@ -16,6 +16,7 @@ class PerplexityClient:
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
+
         # Store conversation history for each user (max 3 Q&A pairs)
         self.conversation_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=3))
     
