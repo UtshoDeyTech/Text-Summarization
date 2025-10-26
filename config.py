@@ -38,11 +38,11 @@ NUM_SUGGESTIONS = 3
 PERPLEXITY_API_KEY= os.environ.get("PERPLEXITY_API_KEY")  # Default key for testing
 
 # Qdrant Configuration
-# Support both URL-based (production) and host:port (development)
-QDRANT_URL = os.environ.get("QDRANT_URL", "")  # Full URL for production (e.g., https://qdrant.example.com)
-QDRANT_HOST = os.environ.get("QDRANT_HOST", "localhost")  # Host for development
-QDRANT_PORT = int(os.environ.get("QDRANT_PORT", "6333"))  # Port for development
-QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "")  # Optional API key
+QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")  # Qdrant connection URL
+QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "")  # Optional Qdrant native API key
 QDRANT_COLLECTION_NAME = os.environ.get("QDRANT_COLLECTION_NAME", "documents")  # Collection name
-QDRANT_USE_HTTPS = os.environ.get("QDRANT_USE_HTTPS", "False").lower() == "true"  # Use HTTPS for production
 QDRANT_TIMEOUT = int(os.environ.get("QDRANT_TIMEOUT", "60"))  # Connection timeout in seconds
+
+# HTTP Basic Auth for Qdrant (when using Nginx reverse proxy)
+QDRANT_USERNAME = os.environ.get("QDRANT_USERNAME", "")  # Username for HTTP Basic Auth
+QDRANT_PASSWORD = os.environ.get("QDRANT_PASSWORD", "")  # Password for HTTP Basic Auth

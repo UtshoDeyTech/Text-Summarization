@@ -3,73 +3,99 @@ from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, Fi
 from datetime import datetime
 from app.service.log_client import logger
 import uuid
+import base64
 from config import (
     QDRANT_URL,
-    QDRANT_HOST,
-    QDRANT_PORT,
     QDRANT_API_KEY,
     QDRANT_COLLECTION_NAME,
-    QDRANT_USE_HTTPS,
-    QDRANT_TIMEOUT
+    QDRANT_TIMEOUT,
+    QDRANT_USERNAME,
+    QDRANT_PASSWORD
 )
 from typing import List, Dict, Optional
 
 DIMENSION = 1536
 
-# Initialize Qdrant client
+def _parse_connection_config():
+    """Parse Qdrant connection configuration from QDRANT_URL"""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(QDRANT_URL)
+
+    return {
+        'host': parsed.hostname or 'localhost',
+        'port': parsed.port or 6333,
+        'use_https': parsed.scheme == 'https'
+    }
+
+def _create_basic_auth_header(username, password):
+    """Create HTTP Basic Auth header"""
+    credentials = f"{username}:{password}"
+    return base64.b64encode(credentials.encode()).decode()
+
+def _get_client_kwargs(host, port, use_https):
+    """Build QdrantClient kwargs based on authentication method"""
+    # Determine authentication method (priority: Basic Auth > API Key > None)
+    if QDRANT_USERNAME and QDRANT_PASSWORD:
+        # Use HTTP Basic Auth (for Nginx reverse proxy)
+        scheme = 'https' if use_https else 'http'
+        url = f"{scheme}://{host}:{port}"
+        auth_header = _create_basic_auth_header(QDRANT_USERNAME, QDRANT_PASSWORD)
+
+        logger.info(f"Connecting to Qdrant with HTTP Basic Auth | host={host}, port={port}, https={use_https}, username={QDRANT_USERNAME}")
+
+        return {
+            'url': url,
+            'timeout': QDRANT_TIMEOUT,
+            'prefer_grpc': False,
+            'metadata': {"Authorization": f"Basic {auth_header}"}
+        }
+
+    elif QDRANT_API_KEY:
+        # Use Qdrant native API Key
+        logger.info(f"Connecting to Qdrant with API Key | host={host}, port={port}, https={use_https}")
+
+        return {
+            'host': host,
+            'port': port,
+            'api_key': QDRANT_API_KEY,
+            'https': use_https,
+            'timeout': QDRANT_TIMEOUT,
+            'prefer_grpc': False
+        }
+
+    else:
+        # No authentication (local development)
+        logger.info(f"Connecting to Qdrant without authentication | host={host}, port={port}, https={use_https}")
+
+        return {
+            'host': host,
+            'port': port,
+            'https': use_https,
+            'timeout': QDRANT_TIMEOUT,
+            'prefer_grpc': False
+        }
+
 def get_qdrant_client():
-    """Get Qdrant client instance - supports both URL and host:port configuration"""
+    """Get Qdrant client instance - supports both URL and host:port configuration with HTTP Basic Auth"""
     try:
-        # Priority 1: Use QDRANT_URL if provided (for production/cloud deployments)
-        if QDRANT_URL:
-            # Parse URL to extract host and determine if HTTPS
-            from urllib.parse import urlparse
-            parsed = urlparse(QDRANT_URL)
-            host = parsed.hostname or QDRANT_HOST
-            port = parsed.port or QDRANT_PORT
-            use_https = parsed.scheme == 'https' or QDRANT_USE_HTTPS
+        # Parse connection configuration
+        config = _parse_connection_config()
 
-            logger.info(f"Connecting to Qdrant | host={host}, port={port}, https={use_https}")
+        # Get client kwargs based on authentication method
+        client_kwargs = _get_client_kwargs(
+            host=config['host'],
+            port=config['port'],
+            use_https=config['use_https']
+        )
 
-            if QDRANT_API_KEY:
-                client = QdrantClient(
-                    host=host,
-                    port=port,
-                    api_key=QDRANT_API_KEY,
-                    https=use_https,
-                    timeout=QDRANT_TIMEOUT,
-                    prefer_grpc=False  # Use REST API instead of gRPC
-                )
-            else:
-                client = QdrantClient(
-                    host=host,
-                    port=port,
-                    https=use_https,
-                    timeout=QDRANT_TIMEOUT,
-                    prefer_grpc=False  # Use REST API instead of gRPC
-                )
-        # Priority 2: Use host:port (for development/Docker)
-        else:
-            logger.info(f"Connecting to Qdrant using host:port | host={QDRANT_HOST}, port={QDRANT_PORT}, https={QDRANT_USE_HTTPS}")
-            if QDRANT_API_KEY:
-                client = QdrantClient(
-                    host=QDRANT_HOST,
-                    port=QDRANT_PORT,
-                    api_key=QDRANT_API_KEY,
-                    https=QDRANT_USE_HTTPS,
-                    timeout=QDRANT_TIMEOUT
-                )
-            else:
-                client = QdrantClient(
-                    host=QDRANT_HOST,
-                    port=QDRANT_PORT,
-                    https=QDRANT_USE_HTTPS,
-                    timeout=QDRANT_TIMEOUT
-                )
+        # Create client
+        client = QdrantClient(**client_kwargs)
 
         # Verify connection
         client.get_collections()
         logger.info(f"Successfully connected to Qdrant")
+
         return client
 
     except Exception as e:
