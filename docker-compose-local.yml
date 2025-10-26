@@ -4,13 +4,32 @@ services:
   qdrant:
     image: qdrant/qdrant:latest
     container_name: qdrant
-    ports:
-      - "${QDRANT_PORT:-6333}:6333"
-      - "6334:6334"
+    # Ports removed - only accessible through Nginx reverse proxy
+    expose:
+      - "6333"
+      - "6334"
     volumes:
       - qdrant_storage:/qdrant/storage
     environment:
       - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+    restart: unless-stopped
+    networks:
+      - app_network
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: qdrant-nginx
+    ports:
+      - "8080:80"  # Access Qdrant UI/API through this port
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    environment:
+      - QDRANT_USERNAME=${QDRANT_USERNAME:-admin}
+      - QDRANT_PASSWORD=${QDRANT_PASSWORD:-qdrant123}
+    depends_on:
+      - qdrant
     restart: unless-stopped
     networks:
       - app_network

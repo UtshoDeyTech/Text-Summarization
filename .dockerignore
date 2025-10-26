@@ -48,3 +48,6 @@ Dockerfile.*
 # Ensure `requirements.txt` and app code are included
 !requirements.txt
 !main.py  # Replace `main.py` with your actual application entry file
+
+*_cache/
+nginx/
