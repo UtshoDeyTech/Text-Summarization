@@ -49,5 +49,5 @@ Dockerfile.*
 !requirements.txt
 !main.py  # Replace `main.py` with your actual application entry file
 
-*_cache/
+<!-- *_cache/ -->
 nginx/
