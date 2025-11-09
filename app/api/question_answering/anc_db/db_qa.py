@@ -946,6 +946,7 @@ ANSWER:"""
         """
         Process question using DIRECT SQL generation (fast path).
         Bypasses agent exploration entirely.
+        Returns: (formatted_answer, suggestions, found_data)
         """
         logger.info(f"[DIRECT MODE] Processing question: {question[:100]}...")
         logger.info(f"[DIRECT MODE] Lead type: {self.lead_type}, Table: {self.table_name}")
@@ -956,7 +957,7 @@ ANSWER:"""
             # Step 1: Generate SQL directly (1 LLM call)
             sql_query = self.generate_sql_directly(question)
             if not sql_query:
-                return ("Error generating SQL query", [])
+                return ("Error generating SQL query", [], False)
 
             sql_gen_time = round(time.time() - start_time, 3)
             logger.info(f"[DIRECT MODE] SQL generation took {sql_gen_time}s")
@@ -966,19 +967,39 @@ ANSWER:"""
             exec_time = round(time.time() - start_time, 3)
             logger.info(f"[DIRECT MODE] SQL execution took {exec_time - sql_gen_time}s")
 
+            # Check SQL result directly to determine if data was found
+            # This is more reliable than parsing AI-generated text
+            found_data = True
+            sql_result_lower = sql_result.lower().strip()
+
+            # Check for empty results or errors
+            if (not sql_result or
+                sql_result_lower == "[]" or
+                sql_result_lower == "" or
+                "error" in sql_result_lower or
+                sql_result == "None"):
+                found_data = False
+                logger.warning(f"[DIRECT MODE] No data found - SQL result is empty or error")
+
             # Step 3: Format results (1 LLM call)
-            answer = self.format_sql_results(question, sql_result)
+            if found_data:
+                answer = self.format_sql_results(question, sql_result)
+            else:
+                # Generate friendly "no results" message
+                answer = self.generate_no_results_message(question)
+
             format_time = round(time.time() - start_time, 3)
             logger.info(f"[DIRECT MODE] Formatting took {format_time - exec_time}s")
 
-            # Step 4: Generate suggestions (1 LLM call)
-            suggestions = self.generate_natural_suggestions(question, found_data=True)
+            # Step 4: Generate suggestions based on whether data was found
+            suggestions = self.generate_natural_suggestions(question, found_data=found_data)
 
             total_time = round(time.time() - start_time, 3)
             logger.info(f"[DIRECT MODE] ✓ Total time: {total_time}s (SQL: {sql_gen_time}s, Exec: {exec_time - sql_gen_time}s, Format: {format_time - exec_time}s)")
+            logger.info(f"[DIRECT MODE] Data found: {found_data}")
 
             formatted_answer = format_response_as_html_list(answer)
-            return (formatted_answer, suggestions[:3])
+            return (formatted_answer, suggestions[:3], found_data)
 
         except Exception as e:
             logger.error(f"[DIRECT MODE] Error: {type(e).__name__}: {str(e)}")
@@ -1133,8 +1154,10 @@ SUGGESTED_QUESTIONS:
                 "agent stopped", "max iterations"
             ]
 
+            found_data = True
             if not answer or len(answer) < 10 or any(indicator in answer.lower() for indicator in not_found_indicators):
                 logger.warning(f"[PROCESS] No relevant data found or column unavailable")
+                found_data = False
 
                 # Check if it's a "column not found" vs "no data" scenario
                 if any(term in answer.lower() for term in ["not available", "doesn't exist", "no such column"]):
@@ -1150,11 +1173,12 @@ SUGGESTED_QUESTIONS:
                     suggestions = self.generate_natural_suggestions(question, found_data=False)
             else:
                 suggestions = self.generate_natural_suggestions(question, found_data=True)
-            
+
             formatted_answer = format_response_as_html_list(answer)
-            
+
             logger.info(f"[PROCESS] ✓ Question processed successfully")
-            return formatted_answer, suggestions[:3]
+            logger.info(f"[PROCESS] Data found: {found_data}")
+            return formatted_answer, suggestions[:3], found_data
             
         except Exception as e:
             logger.error(f"[PROCESS] ✗ Error: {type(e).__name__}: {str(e)}")
@@ -1232,19 +1256,20 @@ async def ask_ancdb_restricted(input_data: AncDBInput):
         )
 
         if cached_result:
-            answer, suggested_questions = cached_result
+            answer, suggested_questions, found_data = cached_result
             execution_time = round(time.time() - start_time, 2)
 
             logger.info(f"[ENDPOINT] ✓ Query served from cache in {execution_time}s (no API calls!)")
+            logger.info(f"[ENDPOINT] Cached result - Data found: {found_data}")
 
             return AncDBResponse(
                 question=input_data.question,
                 answer=answer,
-                sources=[f"{input_data.lead_type} Leads Data (cached)", "Customer Data"],
+                sources=[f"{input_data.lead_type} Leads Data (cached)", "Customer Data"] if found_data else [],
                 suggested_questions=suggested_questions,
                 model_used="gpt-4o-mini (cached)",
                 status_code="200",
-                found=True,
+                found=found_data,
                 execution_time=execution_time,
                 filtered_by=f"agent_id={input_data.agent_id}, agency_id={input_data.agency_id}",
                 lead_type=input_data.lead_type
@@ -1262,7 +1287,7 @@ async def ask_ancdb_restricted(input_data: AncDBInput):
 
         # Process the question using DIRECT MODE (bypasses agent iterations)
         logger.info(f"[ENDPOINT] Processing question with DIRECT SQL generation")
-        answer, suggested_questions = agent.process_question_direct(input_data.question)
+        answer, suggested_questions, found_data = agent.process_question_direct(input_data.question)
 
         # Cache the result for future requests (async - don't wait)
         asyncio.create_task(asyncio.to_thread(
@@ -1272,25 +1297,27 @@ async def ask_ancdb_restricted(input_data: AncDBInput):
             agent_id=input_data.agent_id,
             agency_id=input_data.agency_id,
             answer=answer,
-            suggested_questions=suggested_questions
+            suggested_questions=suggested_questions,
+            found_data=found_data
         ))
-        
+
         # Build filter description
         filtered_by = f"agent_id={input_data.agent_id}, agency_id={input_data.agency_id}"
-        
+
         execution_time = round(time.time() - start_time, 2)
-        
+
         logger.info(f"[ENDPOINT] ✓ Query completed successfully in {execution_time}s")
         logger.info(f"[ENDPOINT] Answer length: {len(answer)} characters")
-        
+        logger.info(f"[ENDPOINT] Data found: {found_data}")
+
         return AncDBResponse(
             question=input_data.question,
             answer=answer,
-            sources=[f"{input_data.lead_type} Leads Data", "Customer Data"],
+            sources=[f"{input_data.lead_type} Leads Data", "Customer Data"] if found_data else [],
             suggested_questions=suggested_questions,
             model_used="gpt-4o-mini",
             status_code="200",
-            found=True,
+            found=found_data,
             execution_time=execution_time,
             filtered_by=filtered_by,
             lead_type=input_data.lead_type

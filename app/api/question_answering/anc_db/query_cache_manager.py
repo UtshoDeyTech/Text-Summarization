@@ -62,7 +62,7 @@ class QueryCacheManager:
 
         return cache_key
 
-    def get_cached_result(self, question: str, lead_type: str, agent_id: str, agency_id: str) -> Optional[Tuple[str, List[str]]]:
+    def get_cached_result(self, question: str, lead_type: str, agent_id: str, agency_id: str) -> Optional[Tuple[str, List[str], bool]]:
         """
         Get cached result for a query
 
@@ -73,7 +73,7 @@ class QueryCacheManager:
             agency_id: Agency ID
 
         Returns:
-            Tuple of (answer, suggested_questions) if cached and not expired, None otherwise
+            Tuple of (answer, suggested_questions, found_data) if cached and not expired, None otherwise
         """
         try:
             cache_key = self._generate_cache_key(question, lead_type, agent_id, agency_id)
@@ -87,7 +87,9 @@ class QueryCacheManager:
                 if datetime.now() - cached_time < self.cache_ttl:
                     logger.info(f"[QUERY CACHE] ✓ Cache hit for question: {question[:50]}...")
                     logger.info(f"[QUERY CACHE] Cache age: {(datetime.now() - cached_time).seconds}s")
-                    return (entry["answer"], entry["suggested_questions"])
+                    # Handle backward compatibility - old cache entries might not have found_data
+                    found_data = entry.get("found_data", True)
+                    return (entry["answer"], entry["suggested_questions"], found_data)
                 else:
                     logger.info(f"[QUERY CACHE] Cache expired for question: {question[:50]}...")
                     # Remove expired entry
@@ -102,7 +104,7 @@ class QueryCacheManager:
             return None
 
     def cache_result(self, question: str, lead_type: str, agent_id: str, agency_id: str,
-                    answer: str, suggested_questions: List[str]) -> bool:
+                    answer: str, suggested_questions: List[str], found_data: bool = True) -> bool:
         """
         Cache query result
 
@@ -113,6 +115,7 @@ class QueryCacheManager:
             agency_id: Agency ID
             answer: Query answer
             suggested_questions: Suggested follow-up questions
+            found_data: Whether relevant data was found (default: True for backward compatibility)
 
         Returns:
             bool: True if cached successfully, False otherwise
@@ -129,6 +132,7 @@ class QueryCacheManager:
                 "agency_id": agency_id,
                 "answer": answer,
                 "suggested_questions": suggested_questions,
+                "found_data": found_data,
                 "cached_at": datetime.now().isoformat(),
                 "cache_key": cache_key
             }
@@ -141,7 +145,7 @@ class QueryCacheManager:
             # Save to file
             self._save_cache(cache_data)
 
-            logger.info(f"[QUERY CACHE] ✓ Cached result for question: {question[:50]}...")
+            logger.info(f"[QUERY CACHE] ✓ Cached result for question: {question[:50]}... (found_data={found_data})")
             return True
 
         except Exception as e:
