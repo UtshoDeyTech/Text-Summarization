@@ -4,11 +4,12 @@ FROM mcr.microsoft.com/playwright/python:v1.40.0-jammy
 # Set the working directory in the container
 WORKDIR /app
 
-# Install system dependencies including Tesseract OCR
+# Install system dependencies including Tesseract OCR and antiword
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     tesseract-ocr-eng \
     libtesseract-dev \
+    antiword \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the requirements file into the container
