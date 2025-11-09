@@ -1,5 +1,5 @@
-from fastapi import APIRouter, HTTPException
-from typing import List, Dict
+from fastapi import APIRouter, HTTPException, Query
+from typing import List, Dict, Optional
 from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
 import json
@@ -95,9 +95,12 @@ class QuestionResponse(BaseModel):
     sequence_number: int = Field(default=1, description="Sequence number in conversation")
 
 # Cache implementation
-def get_question_hash(question: str, user_id: str) -> str:
-    """Generate a unique hash for a question-user combination."""
-    return hashlib.md5(f"{user_id}:{question}".encode()).hexdigest()
+def get_question_hash(question: str, user_id: str, document_category: Optional[str] = None) -> str:
+    """Generate a unique hash for a question-user-category combination."""
+    cache_key = f"{user_id}:{question}"
+    if document_category:
+        cache_key += f":{document_category}"
+    return hashlib.md5(cache_key.encode()).hexdigest()
 
 @lru_cache(maxsize=1000)
 def get_cached_response(question_hash: str, user_id: str) -> QuestionResponse:
@@ -176,17 +179,26 @@ Important rules:
 10. Include the document_category exactly as provided in the context metadata"""
 
 @router.post("/{user_id}/ask", response_model=QuestionResponse)
-async def ask_question(user_id: str, request: QuestionRequest):
+async def ask_question(
+    user_id: str,
+    request: QuestionRequest,
+    document_category: Optional[str] = Query(None, description="Filter by document category")
+):
     start_time = time.time()
-    
+
     try:
         # Get memory buffer and current sequence
         memory_entries = memory_buffer.get_memory(user_id)
         current_sequence = memory_buffer.get_current_sequence(user_id)
-        
-        # Quick cache check
-        question_hash = get_question_hash(request.question, user_id)
+
+        # Log the category filter if provided
+        if document_category:
+            logger.info(f"Filtering search by document_category={document_category}")
+
+        # Quick cache check (includes document_category in cache key)
+        question_hash = get_question_hash(request.question, user_id, document_category)
         if cached_result := get_cached_response(question_hash, user_id):
+            logger.info(f"Returning cached result for question with category={document_category}")
             return cached_result
 
         # Get embeddings asynchronously
@@ -196,7 +208,25 @@ async def ask_question(user_id: str, request: QuestionRequest):
         # Connect to Qdrant
         qdrant_client = get_qdrant_client()
 
-        # Search for similar vectors filtered by user_id
+        # Build search filter conditions
+        filter_conditions = [
+            FieldCondition(
+                key="user_id",
+                match=MatchValue(value=user_id)
+            )
+        ]
+
+        # Add document_category filter if provided
+        if document_category:
+            filter_conditions.append(
+                FieldCondition(
+                    key="document_category",
+                    match=MatchValue(value=document_category)
+                )
+            )
+            logger.info(f"Search filter includes document_category={document_category}")
+
+        # Search for similar vectors filtered by user_id and optionally document_category
         try:
             search_results = qdrant_client.search(
                 collection_name=QDRANT_COLLECTION_NAME,
@@ -204,14 +234,7 @@ async def ask_question(user_id: str, request: QuestionRequest):
                 limit=MAX_CHUNKS * 3,  # Get more to filter by score
                 score_threshold=0.6,  # Only return matches with score > 0.6
                 with_payload=True,
-                query_filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="user_id",
-                            match=MatchValue(value=user_id)
-                        )
-                    ]
-                )
+                query_filter=Filter(must=filter_conditions)
             )
         except Exception as e:
             logger.error(f"Qdrant search error | user_id={user_id}, error={str(e)}")
