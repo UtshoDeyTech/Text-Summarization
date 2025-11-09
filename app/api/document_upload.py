@@ -6,6 +6,9 @@ from PyPDF2 import PdfReader
 from docx import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from io import BytesIO
+import os
+import subprocess
+import tempfile
 from tqdm import tqdm
 from app.service.openai_client import get_embeddings
 from app.service.qdrant_client import (
@@ -24,7 +27,8 @@ text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=10
 
 SUPPORTED_EXTENSIONS = {
     'pdf': 'application/pdf',
-    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'doc': 'application/msword'
 }
 
 def truncate_text_for_metadata(text: str, max_bytes: int = 35000) -> str:
@@ -48,6 +52,34 @@ def extract_text_from_pdf(file_obj):
     
     return text
 
+def extract_text_from_doc(file_obj):
+    # Create a temporary file
+    with tempfile.NamedTemporaryFile(suffix='.doc', delete=False) as temp_file:
+        temp_path = temp_file.name
+        # Write the content to the temporary file
+        temp_file.write(file_obj.read())
+        file_obj.seek(0)  # Reset the file pointer
+    
+    try:
+        # Use antiword to extract text from the .doc file
+        result = subprocess.run(['antiword', temp_path], capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception(f"antiword failed: {result.stderr}")
+        
+        text = result.stdout
+        if not text:
+            raise Exception("No text could be extracted from the document")
+        
+        return text
+        
+    except Exception as e:
+        logger.error(f"Error reading .doc file: {str(e)}")
+        raise
+    finally:
+        # Clean up the temporary file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
 def extract_text_from_docx(file_obj):
     doc = Document(file_obj)
     text = ""
@@ -68,6 +100,9 @@ def process_document(file_obj, file_extension):
             chunks = text_splitter.split_text(text)
         elif file_extension == 'docx':
             text = extract_text_from_docx(file_obj)
+            chunks = text_splitter.split_text(text)
+        elif file_extension == 'doc':
+            text = extract_text_from_doc(file_obj)
             chunks = text_splitter.split_text(text)
         else:
             raise ValueError(f"Unsupported file type: {file_extension}")
